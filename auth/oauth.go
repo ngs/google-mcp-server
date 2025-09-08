@@ -145,7 +145,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 
 			codeChan <- code
 			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprintf(w, `<html><body>
+			_, _ = fmt.Fprintf(w, `<html><body>
 				<h1>Authentication successful!</h1>
 				<p>You can close this window and return to the terminal.</p>
 				<script>window.close()</script>
@@ -201,7 +201,7 @@ func (c *OAuthClient) loadToken() error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	token := &oauth2.Token{}
 	if err := json.NewDecoder(file).Decode(token); err != nil {
@@ -240,7 +240,7 @@ func (c *OAuthClient) saveToken() error {
 	if err != nil {
 		return fmt.Errorf("failed to create token file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if err := json.NewEncoder(file).Encode(token); err != nil {
 		return fmt.Errorf("failed to encode token: %w", err)
@@ -330,7 +330,7 @@ func (c *OAuthClient) Revoke(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Remove local token file
 	if err := os.Remove(c.tokenFile); err != nil && !os.IsNotExist(err) {

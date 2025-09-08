@@ -150,7 +150,7 @@ func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2
 	case "completion/complete":
 		h.handleCompletion(ctx, conn, req)
 	default:
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("method not found: %s", req.Method),
 		})
@@ -171,7 +171,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
 			Message: "invalid parameters",
 		})
@@ -205,7 +205,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	response.Capabilities.Tools = struct{}{}
 	response.Capabilities.Resources = struct{}{}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleToolsList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -219,7 +219,7 @@ func (h *Handler) handleToolsList(ctx context.Context, conn *jsonrpc2.Conn, req 
 		Tools: tools,
 	}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -229,7 +229,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 	}
 
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
 			Message: "invalid parameters",
 		})
@@ -254,7 +254,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 	h.server.mu.RUnlock()
 
 	if handler == nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("tool not found: %s", params.Name),
 		})
@@ -264,7 +264,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 	// Call the tool
 	result, err := handler.HandleToolCall(ctx, params.Name, params.Arguments)
 	if err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInternalError,
 			Message: err.Error(),
 		})
@@ -292,7 +292,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		IsError: false,
 	}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleResourcesList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -306,7 +306,7 @@ func (h *Handler) handleResourcesList(ctx context.Context, conn *jsonrpc2.Conn, 
 		Resources: resources,
 	}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -315,7 +315,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 	}
 
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
 			Message: "invalid parameters",
 		})
@@ -340,7 +340,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 	h.server.mu.RUnlock()
 
 	if handler == nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("resource not found: %s", params.URI),
 		})
@@ -350,7 +350,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 	// Read the resource
 	result, err := handler.HandleResourceCall(ctx, params.URI)
 	if err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInternalError,
 			Message: err.Error(),
 		})
@@ -377,7 +377,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 		},
 	}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
@@ -394,7 +394,7 @@ func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req
 	}
 
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
+		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
 			Message: "invalid parameters",
 		})
@@ -414,5 +414,5 @@ func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req
 		},
 	}
 
-	conn.Reply(ctx, req.ID, response)
+	_ = conn.Reply(ctx, req.ID, response)
 }

@@ -96,7 +96,7 @@ func (c *Client) DownloadFile(fileID string, writer io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	_, err = io.Copy(writer, resp.Body)
 	if err != nil {
@@ -310,7 +310,7 @@ func (c *Client) UploadFileFromPath(filePath string, parentID string) (*drive.Fi
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Detect MIME type (simplified - in production use proper detection)
 	mimeType := "application/octet-stream"

@@ -672,7 +672,7 @@ func (h *Handler) handlePermissionsDelete(ctx context.Context, fileID, permissio
 func formatFile(file interface{}) map[string]interface{} {
 	data := make(map[string]interface{})
 	jsonData, _ := json.Marshal(file)
-	json.Unmarshal(jsonData, &data)
+	_ = json.Unmarshal(jsonData, &data)
 	return data
 }
 
@@ -680,6 +680,6 @@ func formatFile(file interface{}) map[string]interface{} {
 func formatFiles(files interface{}) []map[string]interface{} {
 	var result []map[string]interface{}
 	jsonData, _ := json.Marshal(files)
-	json.Unmarshal(jsonData, &result)
+	_ = json.Unmarshal(jsonData, &result)
 	return result
 }

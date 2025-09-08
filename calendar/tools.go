@@ -550,7 +550,7 @@ func formatEvent(event interface{}) map[string]interface{} {
 
 	// Use JSON marshaling/unmarshaling as a simple way to convert
 	jsonData, _ := json.Marshal(event)
-	json.Unmarshal(jsonData, &data)
+	_ = json.Unmarshal(jsonData, &data)
 
 	// Clean up some fields for better readability
 	if start, ok := data["start"].(map[string]interface{}); ok {
