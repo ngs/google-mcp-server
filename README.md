@@ -38,7 +38,7 @@ For detailed setup instructions, see below.
 
 1. Google Cloud Project with APIs enabled
 2. OAuth 2.0 credentials from Google Cloud Console
-3. Go 1.20 or later (only for building from source)
+3. Go 1.23 or later (only for building from source)
 
 ### Installation
 
