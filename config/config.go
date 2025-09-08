@@ -86,6 +86,7 @@ type GlobalConfig struct {
 
 // Load loads configuration from various sources
 func Load() (*Config, error) {
+	// Starting configuration load
 	cfg := &Config{
 		Services: ServicesConfig{
 			Calendar: CalendarConfig{Enabled: true},
@@ -117,6 +118,7 @@ func Load() (*Config, error) {
 		"/etc/google-mcp-server/config.json",
 	}
 
+	// Check config files
 	for _, path := range configPaths {
 		if err := cfg.loadFromFile(path); err == nil {
 			break

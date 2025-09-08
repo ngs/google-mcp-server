@@ -339,9 +339,9 @@ func (h *Handler) handleCalendarList(ctx context.Context) (interface{}, error) {
 	}
 
 	// Format the response
-	result := make([]map[string]interface{}, len(calendars))
+	calendarList := make([]map[string]interface{}, len(calendars))
 	for i, cal := range calendars {
-		result[i] = map[string]interface{}{
+		calendarList[i] = map[string]interface{}{
 			"id":              cal.Id,
 			"summary":         cal.Summary,
 			"description":     cal.Description,
@@ -351,7 +351,10 @@ func (h *Handler) handleCalendarList(ctx context.Context) (interface{}, error) {
 		}
 	}
 
-	return result, nil
+	// Return as a map with calendars key
+	return map[string]interface{}{
+		"calendars": calendarList,
+	}, nil
 }
 
 func (h *Handler) handleEventsList(ctx context.Context, calendarID, timeMinStr, timeMaxStr string, maxResults int64) (interface{}, error) {
@@ -378,12 +381,14 @@ func (h *Handler) handleEventsList(ctx context.Context, calendarID, timeMinStr, 
 	}
 
 	// Format the response
-	result := make([]map[string]interface{}, len(events))
+	eventList := make([]map[string]interface{}, len(events))
 	for i, event := range events {
-		result[i] = formatEvent(event)
+		eventList[i] = formatEvent(event)
 	}
 
-	return result, nil
+	return map[string]interface{}{
+		"events": eventList,
+	}, nil
 }
 
 func (h *Handler) handleEventCreate(ctx context.Context, calendarID, summary, description, location,
@@ -533,12 +538,14 @@ func (h *Handler) handleEventSearch(ctx context.Context, calendarID, query, time
 	}
 
 	// Format the response
-	result := make([]map[string]interface{}, len(events))
+	eventList := make([]map[string]interface{}, len(events))
 	for i, event := range events {
-		result[i] = formatEvent(event)
+		eventList[i] = formatEvent(event)
 	}
 
-	return result, nil
+	return map[string]interface{}{
+		"events": eventList,
+	}, nil
 }
 
 // formatEvent formats a calendar event for response

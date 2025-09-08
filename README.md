@@ -369,22 +369,34 @@ See [WORKSPACE_SETUP.md](WORKSPACE_SETUP.md) for detailed instructions on config
 
 ### Common Issues
 
-1. **Authentication Errors**
-   - Ensure OAuth credentials are correctly configured
-   - Check that all required APIs are enabled in Google Cloud Console
-   - Verify redirect URI matches configuration
+1. **Authentication Errors (403: access_denied)**
+   
+   If you encounter a 403 access_denied error during OAuth authentication, see the detailed [OAuth Setup Guide](OAUTH_SETUP.md) for step-by-step instructions.
+   
+   Quick checklist:
+   - ✅ OAuth consent screen configured with all required fields
+   - ✅ Your email added to "Test users" (if app is in testing mode)
+   - ✅ All 6 Google APIs enabled (Calendar, Drive, Gmail, Photos, Sheets, Docs)
+   - ✅ OAuth client type is "Desktop app"
+   - ✅ All required scopes added in OAuth consent screen
+   - ✅ Wait 5-10 minutes after changes for propagation
 
-2. **Permission Denied**
+2. **Configuration File Issues**
+   - Check for JSON syntax errors (extra quotes, missing commas)
+   - Ensure client_id and client_secret are correctly formatted
+   - Verify the config file path: `~/.google-mcp-server/config.json`
+
+3. **Permission Denied**
    - Confirm you've granted all requested permissions during OAuth flow
    - For Workspace accounts, check with your administrator
 
-3. **Rate Limiting**
+4. **Rate Limiting**
    - The server implements exponential backoff for rate limits
    - Consider reducing request frequency if issues persist
 
-4. **Token Expiration**
+5. **Token Expiration**
    - Tokens are automatically refreshed
-   - If refresh fails, re-authenticate by deleting the token file
+   - If refresh fails, re-authenticate by deleting the token file: `rm ~/.google-mcp-token.json`
 
 ## Development
 

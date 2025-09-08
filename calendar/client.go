@@ -12,7 +12,6 @@ import (
 // Client wraps the Google Calendar API client
 type Client struct {
 	service *calendar.Service
-	ctx     context.Context
 }
 
 // NewClient creates a new Calendar client
@@ -24,7 +23,6 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 
 	return &Client{
 		service: service,
-		ctx:     ctx,
 	}, nil
 }
 
@@ -32,8 +30,9 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 func (c *Client) ListCalendars() ([]*calendar.CalendarListEntry, error) {
 	var calendars []*calendar.CalendarListEntry
 
+	ctx := context.Background()
 	call := c.service.CalendarList.List()
-	err := call.Pages(c.ctx, func(page *calendar.CalendarList) error {
+	err := call.Pages(ctx, func(page *calendar.CalendarList) error {
 		calendars = append(calendars, page.Items...)
 		return nil
 	})

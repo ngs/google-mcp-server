@@ -66,7 +66,29 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return doc, nil
+
+		// Format document for response
+		result := map[string]interface{}{
+			"documentId": doc.DocumentId,
+			"title":      doc.Title,
+		}
+
+		// Extract text content from body
+		if doc.Body != nil && doc.Body.Content != nil {
+			var textContent string
+			for _, element := range doc.Body.Content {
+				if element.Paragraph != nil {
+					for _, elem := range element.Paragraph.Elements {
+						if elem.TextRun != nil {
+							textContent += elem.TextRun.Content
+						}
+					}
+				}
+			}
+			result["content"] = textContent
+		}
+
+		return result, nil
 
 	case "docs_document_create":
 		var args struct {
@@ -79,7 +101,14 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return doc, nil
+
+		// Format created document response
+		result := map[string]interface{}{
+			"documentId": doc.DocumentId,
+			"title":      doc.Title,
+			"revisionId": doc.RevisionId,
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)

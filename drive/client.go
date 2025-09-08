@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
+	"time"
 
 	"go.ngs.io/google-mcp-server/auth"
 	"google.golang.org/api/drive/v3"
@@ -13,7 +15,6 @@ import (
 // Client wraps the Google Drive API client
 type Client struct {
 	service *drive.Service
-	ctx     context.Context
 }
 
 // NewClient creates a new Drive client
@@ -25,36 +26,60 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 
 	return &Client{
 		service: service,
-		ctx:     ctx,
 	}, nil
 }
 
 // ListFiles lists files and folders
 func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*drive.File, error) {
-	call := c.service.Files.List().
-		Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)")
+	// Log the request for debugging
+	log.Printf("[Drive] ListFiles called with query=%q, pageSize=%d, parentID=%q", query, pageSize, parentID)
 
-	if query != "" {
-		call = call.Q(query)
+	// Create a new context for the API call
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	call := c.service.Files.List().
+		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)")
+
+	// Build the query
+	finalQuery := query
+	if parentID != "" {
+		parentQuery := fmt.Sprintf("'%s' in parents", parentID)
+		if finalQuery != "" {
+			finalQuery = finalQuery + " and " + parentQuery
+		} else {
+			finalQuery = parentQuery
+		}
+	} else if finalQuery == "" {
+		// If no parent and no query, limit to root folder only to avoid fetching everything
+		finalQuery = "'root' in parents and trashed = false"
 	}
+
+	if finalQuery != "" {
+		log.Printf("[Drive] Final query: %q", finalQuery)
+		call = call.Q(finalQuery)
+	}
+
 	if pageSize > 0 {
 		call = call.PageSize(pageSize)
-	}
-	if parentID != "" {
-		call = call.Q(fmt.Sprintf("'%s' in parents", parentID))
+	} else {
+		// Set default page size if not specified
+		pageSize = 10 // Reduced default to 10 for faster response
+		call = call.PageSize(pageSize)
 	}
 
-	var files []*drive.File
-	err := call.Pages(c.ctx, func(page *drive.FileList) error {
-		files = append(files, page.Files...)
-		return nil
-	})
+	log.Printf("[Drive] Making API call with pageSize=%d", pageSize)
 
+	// Don't use Pages() method as it fetches ALL pages which can cause timeouts
+	// Instead, fetch only one page based on the specified pageSize
+	fileList, err := call.Context(ctx).Do()
 	if err != nil {
+		log.Printf("[Drive] API call failed: %v", err)
 		return nil, fmt.Errorf("failed to list files: %w", err)
 	}
 
-	return files, nil
+	log.Printf("[Drive] API call successful, got %d files", len(fileList.Files))
+	return fileList.Files, nil
 }
 
 // SearchFiles searches for files

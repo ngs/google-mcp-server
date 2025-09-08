@@ -54,7 +54,9 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return albums, nil
+		return map[string]interface{}{
+			"albums": albums,
+		}, nil
 
 	case "photos_album_get":
 		var args struct {

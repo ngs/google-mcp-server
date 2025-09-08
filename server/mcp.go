@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -90,15 +92,12 @@ func (s *MCPServer) Start() error {
 	// Create JSON-RPC connection using stdio
 	handler := &Handler{server: s}
 
-	// Create a pipe-based stream for stdio
-	stream := &StdioStream{
-		input:  os.Stdin,
-		output: os.Stdout,
-	}
+	// Create a newline-delimited JSON stream for MCP
+	stream := NewNewlineDelimitedStream(os.Stdin, os.Stdout)
 
 	conn := jsonrpc2.NewConn(
 		context.Background(),
-		jsonrpc2.NewBufferedStream(stream, &jsonrpc2.VarintObjectCodec{}),
+		stream,
 		handler,
 	)
 
@@ -109,21 +108,51 @@ func (s *MCPServer) Start() error {
 	return nil
 }
 
-// StdioStream implements io.ReadWriteCloser for stdio
-type StdioStream struct {
-	input  *os.File
-	output *os.File
+// NewlineDelimitedStream implements jsonrpc2.ObjectStream for newline-delimited JSON
+type NewlineDelimitedStream struct {
+	reader *bufio.Reader
+	writer io.Writer
+	mu     sync.Mutex
 }
 
-func (s *StdioStream) Read(p []byte) (n int, err error) {
-	return s.input.Read(p)
+// NewNewlineDelimitedStream creates a new newline-delimited JSON stream
+func NewNewlineDelimitedStream(r io.Reader, w io.Writer) *NewlineDelimitedStream {
+	return &NewlineDelimitedStream{
+		reader: bufio.NewReader(r),
+		writer: w,
+	}
 }
 
-func (s *StdioStream) Write(p []byte) (n int, err error) {
-	return s.output.Write(p)
+// ReadObject reads a newline-delimited JSON object
+func (s *NewlineDelimitedStream) ReadObject(v interface{}) error {
+	line, err := s.reader.ReadBytes('\n')
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(line, v)
 }
 
-func (s *StdioStream) Close() error {
+// WriteObject writes a newline-delimited JSON object
+func (s *NewlineDelimitedStream) WriteObject(v interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.writer.Write(data)
+	if err != nil {
+		return err
+	}
+
+	_, err = s.writer.Write([]byte("\n"))
+	return err
+}
+
+// Close closes the stream
+func (s *NewlineDelimitedStream) Close() error {
 	// Don't close stdin/stdout
 	return nil
 }
@@ -271,6 +300,23 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		return
 	}
 
+	// Check if result is already a JSON string
+	var responseText string
+	switch v := result.(type) {
+	case string:
+		responseText = v
+	case []byte:
+		responseText = string(v)
+	default:
+		// Convert to JSON if not already a string
+		jsonBytes, err := json.Marshal(result)
+		if err != nil {
+			responseText = fmt.Sprintf("%v", result)
+		} else {
+			responseText = string(jsonBytes)
+		}
+	}
+
 	response := struct {
 		Content []struct {
 			Type string      `json:"type"`
@@ -286,7 +332,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		}{
 			{
 				Type: "text",
-				Text: fmt.Sprintf("%v", result),
+				Text: responseText,
 			},
 		},
 		IsError: false,

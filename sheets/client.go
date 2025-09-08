@@ -11,7 +11,6 @@ import (
 // Client wraps the Google Sheets API client
 type Client struct {
 	service *sheets.Service
-	ctx     context.Context
 }
 
 // NewClient creates a new Sheets client
@@ -23,7 +22,6 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 
 	return &Client{
 		service: service,
-		ctx:     ctx,
 	}, nil
 }
 

@@ -95,7 +95,28 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return spreadsheet, nil
+
+		// Format spreadsheet metadata for response
+		result := map[string]interface{}{
+			"spreadsheetId":  spreadsheet.SpreadsheetId,
+			"spreadsheetUrl": spreadsheet.SpreadsheetUrl,
+			"title":          spreadsheet.Properties.Title,
+		}
+
+		// Add sheets information
+		if len(spreadsheet.Sheets) > 0 {
+			sheets := make([]map[string]interface{}, len(spreadsheet.Sheets))
+			for i, sheet := range spreadsheet.Sheets {
+				sheets[i] = map[string]interface{}{
+					"sheetId": sheet.Properties.SheetId,
+					"title":   sheet.Properties.Title,
+					"index":   sheet.Properties.Index,
+				}
+			}
+			result["sheets"] = sheets
+		}
+
+		return result, nil
 
 	case "sheets_values_get":
 		var args struct {
@@ -109,7 +130,14 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return values, nil
+
+		// Format values response
+		result := map[string]interface{}{
+			"range":          values.Range,
+			"majorDimension": values.MajorDimension,
+			"values":         values.Values,
+		}
+		return result, nil
 
 	case "sheets_values_update":
 		var args struct {
@@ -124,7 +152,16 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return response, nil
+
+		// Format update response
+		result := map[string]interface{}{
+			"spreadsheetId":  response.SpreadsheetId,
+			"updatedRange":   response.UpdatedRange,
+			"updatedRows":    response.UpdatedRows,
+			"updatedColumns": response.UpdatedColumns,
+			"updatedCells":   response.UpdatedCells,
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)

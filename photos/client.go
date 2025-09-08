@@ -16,7 +16,6 @@ type Album struct {
 // Client wraps the Google Photos API client
 type Client struct {
 	httpClient *http.Client
-	ctx        context.Context
 }
 
 // NewClient creates a new Photos client
@@ -25,7 +24,6 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 	// This is a simplified stub implementation
 	return &Client{
 		httpClient: oauth.GetHTTPClient(),
-		ctx:        ctx,
 	}, nil
 }
 

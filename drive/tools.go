@@ -489,7 +489,9 @@ func (h *Handler) handleFilesList(ctx context.Context, parentID string, pageSize
 		return nil, err
 	}
 
-	return formatFiles(files), nil
+	return map[string]interface{}{
+		"files": formatFiles(files),
+	}, nil
 }
 
 func (h *Handler) handleFilesSearch(ctx context.Context, name, mimeType, modifiedAfter string) (interface{}, error) {
@@ -498,7 +500,9 @@ func (h *Handler) handleFilesSearch(ctx context.Context, name, mimeType, modifie
 		return nil, err
 	}
 
-	return formatFiles(files), nil
+	return map[string]interface{}{
+		"files": formatFiles(files),
+	}, nil
 }
 
 func (h *Handler) handleFileDownload(ctx context.Context, fileID string) (interface{}, error) {

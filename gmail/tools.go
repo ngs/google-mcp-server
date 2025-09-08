@@ -70,7 +70,18 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return messages, nil
+
+		// Format messages for response
+		messageList := make([]map[string]interface{}, len(messages))
+		for i, msg := range messages {
+			messageList[i] = map[string]interface{}{
+				"id":       msg.Id,
+				"threadId": msg.ThreadId,
+			}
+		}
+		return map[string]interface{}{
+			"messages": messageList,
+		}, nil
 
 	case "gmail_message_get":
 		var args struct {
@@ -83,7 +94,33 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
-		return message, nil
+
+		// Format message for response
+		result := map[string]interface{}{
+			"id":           message.Id,
+			"threadId":     message.ThreadId,
+			"labelIds":     message.LabelIds,
+			"snippet":      message.Snippet,
+			"historyId":    message.HistoryId,
+			"internalDate": message.InternalDate,
+			"sizeEstimate": message.SizeEstimate,
+		}
+
+		// Extract headers for easier access
+		if message.Payload != nil && message.Payload.Headers != nil {
+			headers := make(map[string]string)
+			for _, header := range message.Payload.Headers {
+				headers[header.Name] = header.Value
+			}
+			result["headers"] = headers
+
+			// Add body if available
+			if message.Payload.Body != nil && message.Payload.Body.Data != "" {
+				result["body"] = message.Payload.Body.Data
+			}
+		}
+
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
