@@ -70,6 +70,7 @@ jobs:
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
+      shell: bash
       run: |
         output_name='google-mcp-server-${{ matrix.goos }}-${{ matrix.goarch }}'
         if [ "${{ matrix.goos }}" = "windows" ]; then
