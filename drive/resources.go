@@ -43,9 +43,9 @@ func (h *Handler) HandleResourceCall(ctx context.Context, uri string) (interface
 	if !strings.HasPrefix(uri, "drive://") {
 		return nil, fmt.Errorf("invalid drive URI: %s", uri)
 	}
-	
+
 	path := strings.TrimPrefix(uri, "drive://")
-	
+
 	switch path {
 	case "root":
 		return h.getRootFiles(ctx)
@@ -65,7 +65,7 @@ func (h *Handler) getRootFiles(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get root files: %w", err)
 	}
-	
+
 	return map[string]interface{}{
 		"location": "root",
 		"files":    formatFiles(files),
@@ -78,7 +78,7 @@ func (h *Handler) getRecentFiles(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get recent files: %w", err)
 	}
-	
+
 	return map[string]interface{}{
 		"location": "recent",
 		"files":    formatFiles(files),
@@ -91,7 +91,7 @@ func (h *Handler) getStarredFiles(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get starred files: %w", err)
 	}
-	
+
 	return map[string]interface{}{
 		"location": "starred",
 		"files":    formatFiles(files),
@@ -104,7 +104,7 @@ func (h *Handler) getTrashedFiles(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get trashed files: %w", err)
 	}
-	
+
 	return map[string]interface{}{
 		"location": "trash",
 		"files":    formatFiles(files),

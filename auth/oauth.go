@@ -120,10 +120,10 @@ func (c *OAuthClient) GetClientOption() option.ClientOption {
 func (c *OAuthClient) authenticate(ctx context.Context) error {
 	// Generate authorization URL
 	authURL := c.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	
+
 	fmt.Printf("Opening browser for authentication...\n")
 	fmt.Printf("If browser doesn't open, visit this URL:\n%s\n", authURL)
-	
+
 	// Open browser
 	if err := browser.OpenURL(authURL); err != nil {
 		fmt.Printf("Failed to open browser: %v\n", err)
@@ -132,7 +132,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	// Start local server to handle callback
 	codeChan := make(chan string, 1)
 	errChan := make(chan error, 1)
-	
+
 	server := &http.Server{
 		Addr: ":8080",
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +142,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 				http.Error(w, "No authorization code received", http.StatusBadRequest)
 				return
 			}
-			
+
 			codeChan <- code
 			w.Header().Set("Content-Type", "text/html")
 			fmt.Fprintf(w, `<html><body>
@@ -319,7 +319,7 @@ func (c *OAuthClient) Revoke(ctx context.Context) error {
 	}
 
 	// Revoke token via Google API
-	req, err := http.NewRequestWithContext(ctx, "POST", 
+	req, err := http.NewRequestWithContext(ctx, "POST",
 		fmt.Sprintf("https://oauth2.googleapis.com/revoke?token=%s", c.token.AccessToken),
 		nil)
 	if err != nil {

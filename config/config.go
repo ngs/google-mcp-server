@@ -28,44 +28,44 @@ type ServicesConfig struct {
 
 // CalendarConfig represents Calendar service configuration
 type CalendarConfig struct {
-	Enabled          bool   `json:"enabled"`
-	DefaultCalendar  string `json:"default_calendar,omitempty"`
-	ReminderMinutes  int    `json:"reminder_minutes,omitempty"`
-	TimeZone         string `json:"time_zone,omitempty"`
+	Enabled         bool   `json:"enabled"`
+	DefaultCalendar string `json:"default_calendar,omitempty"`
+	ReminderMinutes int    `json:"reminder_minutes,omitempty"`
+	TimeZone        string `json:"time_zone,omitempty"`
 }
 
 // DriveConfig represents Drive service configuration
 type DriveConfig struct {
-	Enabled        bool   `json:"enabled"`
-	DefaultFolder  string `json:"default_folder,omitempty"`
-	ChunkSize      int    `json:"chunk_size,omitempty"`
-	MaxRetries     int    `json:"max_retries,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	DefaultFolder string `json:"default_folder,omitempty"`
+	ChunkSize     int    `json:"chunk_size,omitempty"`
+	MaxRetries    int    `json:"max_retries,omitempty"`
 }
 
 // GmailConfig represents Gmail service configuration
 type GmailConfig struct {
-	Enabled        bool     `json:"enabled"`
-	SendLimit      int      `json:"send_limit,omitempty"`
-	DefaultLabels  []string `json:"default_labels,omitempty"`
-	Signature      string   `json:"signature,omitempty"`
-	MaxResults     int      `json:"max_results,omitempty"`
+	Enabled       bool     `json:"enabled"`
+	SendLimit     int      `json:"send_limit,omitempty"`
+	DefaultLabels []string `json:"default_labels,omitempty"`
+	Signature     string   `json:"signature,omitempty"`
+	MaxResults    int      `json:"max_results,omitempty"`
 }
 
 // PhotosConfig represents Photos service configuration
 type PhotosConfig struct {
-	Enabled        bool   `json:"enabled"`
-	UploadQuality  string `json:"upload_quality,omitempty"`
-	AutoBackup     bool   `json:"auto_backup,omitempty"`
-	MaxBatchSize   int    `json:"max_batch_size,omitempty"`
+	Enabled       bool   `json:"enabled"`
+	UploadQuality string `json:"upload_quality,omitempty"`
+	AutoBackup    bool   `json:"auto_backup,omitempty"`
+	MaxBatchSize  int    `json:"max_batch_size,omitempty"`
 }
 
 // SheetsConfig represents Sheets service configuration
 type SheetsConfig struct {
-	Enabled         bool   `json:"enabled"`
-	DefaultRange    string `json:"default_range,omitempty"`
-	BatchSize       int    `json:"batch_size,omitempty"`
-	NumberFormat    string `json:"number_format,omitempty"`
-	DateFormat      string `json:"date_format,omitempty"`
+	Enabled      bool   `json:"enabled"`
+	DefaultRange string `json:"default_range,omitempty"`
+	BatchSize    int    `json:"batch_size,omitempty"`
+	NumberFormat string `json:"number_format,omitempty"`
+	DateFormat   string `json:"date_format,omitempty"`
 }
 
 // DocsConfig represents Docs service configuration

@@ -326,8 +326,8 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 
 	case "drive_files_search":
 		var args struct {
-			Name         string `json:"name"`
-			MimeType     string `json:"mime_type"`
+			Name          string `json:"name"`
+			MimeType      string `json:"mime_type"`
 			ModifiedAfter string `json:"modified_after"`
 		}
 		if err := json.Unmarshal(arguments, &args); err != nil {
@@ -483,12 +483,12 @@ func (h *Handler) handleFilesList(ctx context.Context, parentID string, pageSize
 	if pageSize <= 0 {
 		pageSize = 100
 	}
-	
+
 	files, err := h.client.ListFiles("", pageSize, parentID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFiles(files), nil
 }
 
@@ -497,7 +497,7 @@ func (h *Handler) handleFilesSearch(ctx context.Context, name, mimeType, modifie
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFiles(files), nil
 }
 
@@ -507,7 +507,7 @@ func (h *Handler) handleFileDownload(ctx context.Context, fileID string) (interf
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Return base64 encoded content
 	return map[string]interface{}{
 		"file_id": fileID,
@@ -528,16 +528,16 @@ func (h *Handler) handleFileUpload(ctx context.Context, name, content, mimeType,
 			reader = bytes.NewReader(decoded)
 		}
 	}
-	
+
 	if mimeType == "" {
 		mimeType = "text/plain"
 	}
-	
+
 	file, err := h.client.UploadFile(name, mimeType, reader, parentID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(file), nil
 }
 
@@ -546,7 +546,7 @@ func (h *Handler) handleFileGetMetadata(ctx context.Context, fileID string) (int
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(file), nil
 }
 
@@ -555,7 +555,7 @@ func (h *Handler) handleFileUpdateMetadata(ctx context.Context, fileID, name, de
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(file), nil
 }
 
@@ -564,7 +564,7 @@ func (h *Handler) handleFolderCreate(ctx context.Context, name, parentID string)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(folder), nil
 }
 
@@ -573,7 +573,7 @@ func (h *Handler) handleFileMove(ctx context.Context, fileID, newParentID string
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(file), nil
 }
 
@@ -582,7 +582,7 @@ func (h *Handler) handleFileCopy(ctx context.Context, fileID, newName string) (i
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatFile(file), nil
 }
 
@@ -591,7 +591,7 @@ func (h *Handler) handleFileDelete(ctx context.Context, fileID string) (interfac
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]string{"status": "deleted", "file_id": fileID}, nil
 }
 
@@ -600,7 +600,7 @@ func (h *Handler) handleFileTrash(ctx context.Context, fileID string) (interface
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]string{"status": "trashed", "file_id": fileID}, nil
 }
 
@@ -609,7 +609,7 @@ func (h *Handler) handleFileRestore(ctx context.Context, fileID string) (interfa
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]string{"status": "restored", "file_id": fileID}, nil
 }
 
@@ -618,7 +618,7 @@ func (h *Handler) handleSharedLinkCreate(ctx context.Context, fileID, role strin
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]interface{}{
 		"file_id": fileID,
 		"link":    link,
@@ -631,7 +631,7 @@ func (h *Handler) handlePermissionsList(ctx context.Context, fileID string) (int
 	if err != nil {
 		return nil, err
 	}
-	
+
 	result := make([]map[string]interface{}, len(permissions))
 	for i, perm := range permissions {
 		result[i] = map[string]interface{}{
@@ -641,7 +641,7 @@ func (h *Handler) handlePermissionsList(ctx context.Context, fileID string) (int
 			"emailAddress": perm.EmailAddress,
 		}
 	}
-	
+
 	return result, nil
 }
 
@@ -650,7 +650,7 @@ func (h *Handler) handlePermissionsCreate(ctx context.Context, fileID, email, ro
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]interface{}{
 		"id":           permission.Id,
 		"type":         permission.Type,
@@ -664,7 +664,7 @@ func (h *Handler) handlePermissionsDelete(ctx context.Context, fileID, permissio
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return map[string]string{"status": "deleted", "permission_id": permissionID}, nil
 }
 

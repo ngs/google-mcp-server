@@ -1,9 +1,8 @@
 module go.ngs.io/google-mcp-server
 
-go 1.21
+go 1.20
 
 require (
-	github.com/google/uuid v1.5.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/sourcegraph/jsonrpc2 v0.2.0
 	golang.org/x/oauth2 v0.15.0
@@ -19,6 +18,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
+	github.com/google/uuid v1.5.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.0 // indirect
 	go.opencensus.io v0.24.0 // indirect

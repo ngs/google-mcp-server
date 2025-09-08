@@ -237,7 +237,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 	switch name {
 	case "calendar_list":
 		return h.handleCalendarList(ctx)
-	
+
 	case "calendar_events_list":
 		var args struct {
 			CalendarID string  `json:"calendar_id"`
@@ -249,7 +249,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleEventsList(ctx, args.CalendarID, args.TimeMin, args.TimeMax, int64(args.MaxResults))
-	
+
 	case "calendar_event_create":
 		var args struct {
 			CalendarID  string   `json:"calendar_id"`
@@ -264,9 +264,9 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err := json.Unmarshal(arguments, &args); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
-		return h.handleEventCreate(ctx, args.CalendarID, args.Summary, args.Description, 
+		return h.handleEventCreate(ctx, args.CalendarID, args.Summary, args.Description,
 			args.Location, args.StartTime, args.EndTime, args.Attendees, args.Reminders)
-	
+
 	case "calendar_event_update":
 		var args struct {
 			CalendarID  string `json:"calendar_id"`
@@ -282,7 +282,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		}
 		return h.handleEventUpdate(ctx, args.CalendarID, args.EventID, args.Summary,
 			args.Description, args.Location, args.StartTime, args.EndTime)
-	
+
 	case "calendar_event_delete":
 		var args struct {
 			CalendarID string `json:"calendar_id"`
@@ -292,7 +292,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleEventDelete(ctx, args.CalendarID, args.EventID)
-	
+
 	case "calendar_event_get":
 		var args struct {
 			CalendarID string `json:"calendar_id"`
@@ -302,7 +302,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleEventGet(ctx, args.CalendarID, args.EventID)
-	
+
 	case "calendar_freebusy_query":
 		var args struct {
 			CalendarIDs []string `json:"calendar_ids"`
@@ -313,7 +313,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleFreeBusyQuery(ctx, args.CalendarIDs, args.TimeMin, args.TimeMax)
-	
+
 	case "calendar_event_search":
 		var args struct {
 			CalendarID string `json:"calendar_id"`
@@ -325,7 +325,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleEventSearch(ctx, args.CalendarID, args.Query, args.TimeMin, args.TimeMax)
-	
+
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
 	}
@@ -337,86 +337,86 @@ func (h *Handler) handleCalendarList(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Format the response
 	result := make([]map[string]interface{}, len(calendars))
 	for i, cal := range calendars {
 		result[i] = map[string]interface{}{
-			"id":            cal.Id,
-			"summary":       cal.Summary,
-			"description":   cal.Description,
-			"primary":       cal.Primary,
-			"accessRole":    cal.AccessRole,
+			"id":              cal.Id,
+			"summary":         cal.Summary,
+			"description":     cal.Description,
+			"primary":         cal.Primary,
+			"accessRole":      cal.AccessRole,
 			"backgroundColor": cal.BackgroundColor,
 		}
 	}
-	
+
 	return result, nil
 }
 
 func (h *Handler) handleEventsList(ctx context.Context, calendarID, timeMinStr, timeMaxStr string, maxResults int64) (interface{}, error) {
 	var timeMin, timeMax time.Time
 	var err error
-	
+
 	if timeMinStr != "" {
 		timeMin, err = time.Parse(time.RFC3339, timeMinStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_min format: %w", err)
 		}
 	}
-	
+
 	if timeMaxStr != "" {
 		timeMax, err = time.Parse(time.RFC3339, timeMaxStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_max format: %w", err)
 		}
 	}
-	
+
 	events, err := h.client.ListEvents(calendarID, timeMin, timeMax, maxResults)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Format the response
 	result := make([]map[string]interface{}, len(events))
 	for i, event := range events {
 		result[i] = formatEvent(event)
 	}
-	
+
 	return result, nil
 }
 
 func (h *Handler) handleEventCreate(ctx context.Context, calendarID, summary, description, location,
 	startTimeStr, endTimeStr string, attendees []string, reminders []int) (interface{}, error) {
-	
+
 	startTime, err := time.Parse(time.RFC3339, startTimeStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start_time format: %w", err)
 	}
-	
+
 	endTime, err := time.Parse(time.RFC3339, endTimeStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid end_time format: %w", err)
 	}
-	
+
 	event, err := h.client.CreateEventFromDetails(calendarID, summary, description, location,
 		startTime, endTime, attendees, reminders)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatEvent(event), nil
 }
 
 func (h *Handler) handleEventUpdate(ctx context.Context, calendarID, eventID, summary,
 	description, location, startTimeStr, endTimeStr string) (interface{}, error) {
-	
+
 	// Get existing event
 	event, err := h.client.GetEvent(calendarID, eventID)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Update fields if provided
 	if summary != "" {
 		event.Summary = summary
@@ -441,12 +441,12 @@ func (h *Handler) handleEventUpdate(ctx context.Context, calendarID, eventID, su
 		}
 		event.End.DateTime = endTime.Format(time.RFC3339)
 	}
-	
+
 	updated, err := h.client.UpdateEvent(calendarID, eventID, event)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return formatEvent(updated), nil
 }
 
@@ -470,22 +470,22 @@ func (h *Handler) handleFreeBusyQuery(ctx context.Context, calendarIDs []string,
 	if err != nil {
 		return nil, fmt.Errorf("invalid time_min format: %w", err)
 	}
-	
+
 	timeMax, err := time.Parse(time.RFC3339, timeMaxStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid time_max format: %w", err)
 	}
-	
+
 	response, err := h.client.QueryFreeBusy(calendarIDs, timeMin, timeMax)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Format the response
 	result := make(map[string]interface{})
 	result["timeMin"] = response.TimeMin
 	result["timeMax"] = response.TimeMax
-	
+
 	calendars := make(map[string]interface{})
 	for id, cal := range response.Calendars {
 		calData := make(map[string]interface{})
@@ -505,39 +505,39 @@ func (h *Handler) handleFreeBusyQuery(ctx context.Context, calendarIDs []string,
 		calendars[id] = calData
 	}
 	result["calendars"] = calendars
-	
+
 	return result, nil
 }
 
 func (h *Handler) handleEventSearch(ctx context.Context, calendarID, query, timeMinStr, timeMaxStr string) (interface{}, error) {
 	var timeMin, timeMax time.Time
 	var err error
-	
+
 	if timeMinStr != "" {
 		timeMin, err = time.Parse(time.RFC3339, timeMinStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_min format: %w", err)
 		}
 	}
-	
+
 	if timeMaxStr != "" {
 		timeMax, err = time.Parse(time.RFC3339, timeMaxStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_max format: %w", err)
 		}
 	}
-	
+
 	events, err := h.client.SearchEvents(calendarID, query, timeMin, timeMax)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Format the response
 	result := make([]map[string]interface{}, len(events))
 	for i, event := range events {
 		result[i] = formatEvent(event)
 	}
-	
+
 	return result, nil
 }
 
@@ -545,13 +545,13 @@ func (h *Handler) handleEventSearch(ctx context.Context, calendarID, query, time
 func formatEvent(event interface{}) map[string]interface{} {
 	// This is a simplified version - the actual Google Calendar Event struct has many more fields
 	// In a real implementation, we'd use type assertion and properly format all fields
-	
+
 	data := make(map[string]interface{})
-	
+
 	// Use JSON marshaling/unmarshaling as a simple way to convert
 	jsonData, _ := json.Marshal(event)
 	json.Unmarshal(jsonData, &data)
-	
+
 	// Clean up some fields for better readability
 	if start, ok := data["start"].(map[string]interface{}); ok {
 		if dt, exists := start["dateTime"]; exists {
@@ -560,7 +560,7 @@ func formatEvent(event interface{}) map[string]interface{} {
 			data["startDate"] = d
 		}
 	}
-	
+
 	if end, ok := data["end"].(map[string]interface{}); ok {
 		if dt, exists := end["dateTime"]; exists {
 			data["endTime"] = dt
@@ -568,6 +568,6 @@ func formatEvent(event interface{}) map[string]interface{} {
 			data["endDate"] = d
 		}
 	}
-	
+
 	return data
 }

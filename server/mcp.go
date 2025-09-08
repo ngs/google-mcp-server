@@ -13,11 +13,11 @@ import (
 
 // MCPServer represents the MCP server
 type MCPServer struct {
-	config   *config.Config
-	services map[string]ServiceHandler
-	conn     *jsonrpc2.Conn
-	mu       sync.RWMutex
-	tools    []Tool
+	config    *config.Config
+	services  map[string]ServiceHandler
+	conn      *jsonrpc2.Conn
+	mu        sync.RWMutex
+	tools     []Tool
 	resources []Resource
 }
 
@@ -38,17 +38,17 @@ type Tool struct {
 
 // InputSchema represents the JSON schema for tool input
 type InputSchema struct {
-	Type       string                 `json:"type"`
-	Properties map[string]Property    `json:"properties"`
-	Required   []string              `json:"required,omitempty"`
+	Type       string              `json:"type"`
+	Properties map[string]Property `json:"properties"`
+	Required   []string            `json:"required,omitempty"`
 }
 
 // Property represents a property in the input schema
 type Property struct {
-	Type        string   `json:"type"`
-	Description string   `json:"description"`
+	Type        string    `json:"type"`
+	Description string    `json:"description"`
 	Items       *Property `json:"items,omitempty"`
-	Enum        []string `json:"enum,omitempty"`
+	Enum        []string  `json:"enum,omitempty"`
 }
 
 // Resource represents an MCP resource
@@ -62,9 +62,9 @@ type Resource struct {
 // NewMCPServer creates a new MCP server
 func NewMCPServer(cfg *config.Config) *MCPServer {
 	return &MCPServer{
-		config:   cfg,
-		services: make(map[string]ServiceHandler),
-		tools:    []Tool{},
+		config:    cfg,
+		services:  make(map[string]ServiceHandler),
+		tools:     []Tool{},
 		resources: []Resource{},
 	}
 }
@@ -73,13 +73,13 @@ func NewMCPServer(cfg *config.Config) *MCPServer {
 func (s *MCPServer) RegisterService(name string, handler ServiceHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	s.services[name] = handler
-	
+
 	// Add tools from the service
 	tools := handler.GetTools()
 	s.tools = append(s.tools, tools...)
-	
+
 	// Add resources from the service
 	resources := handler.GetResources()
 	s.resources = append(s.resources, resources...)
@@ -89,13 +89,13 @@ func (s *MCPServer) RegisterService(name string, handler ServiceHandler) {
 func (s *MCPServer) Start() error {
 	// Create JSON-RPC connection using stdio
 	handler := &Handler{server: s}
-	
+
 	// Create a pipe-based stream for stdio
 	stream := &StdioStream{
 		input:  os.Stdin,
 		output: os.Stdout,
 	}
-	
+
 	conn := jsonrpc2.NewConn(
 		context.Background(),
 		jsonrpc2.NewBufferedStream(stream, &jsonrpc2.VarintObjectCodec{}),
@@ -161,15 +161,15 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 	var params struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Capabilities    struct {
-			Roots       interface{} `json:"roots,omitempty"`
-			Sampling    interface{} `json:"sampling,omitempty"`
+			Roots    interface{} `json:"roots,omitempty"`
+			Sampling interface{} `json:"sampling,omitempty"`
 		} `json:"capabilities"`
 		ClientInfo struct {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		} `json:"clientInfo"`
 	}
-	
+
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
@@ -177,7 +177,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 		})
 		return
 	}
-	
+
 	response := struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Capabilities    struct {
@@ -200,11 +200,11 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 			Version: "0.1.0",
 		},
 	}
-	
+
 	// Set capabilities
 	response.Capabilities.Tools = struct{}{}
 	response.Capabilities.Resources = struct{}{}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }
 
@@ -212,13 +212,13 @@ func (h *Handler) handleToolsList(ctx context.Context, conn *jsonrpc2.Conn, req 
 	h.server.mu.RLock()
 	tools := h.server.tools
 	h.server.mu.RUnlock()
-	
+
 	response := struct {
 		Tools []Tool `json:"tools"`
 	}{
 		Tools: tools,
 	}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }
 
@@ -227,7 +227,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
 	}
-	
+
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
@@ -235,7 +235,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		})
 		return
 	}
-	
+
 	// Find the appropriate service handler
 	h.server.mu.RLock()
 	var handler ServiceHandler
@@ -252,7 +252,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		}
 	}
 	h.server.mu.RUnlock()
-	
+
 	if handler == nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -260,7 +260,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		})
 		return
 	}
-	
+
 	// Call the tool
 	result, err := handler.HandleToolCall(ctx, params.Name, params.Arguments)
 	if err != nil {
@@ -270,7 +270,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		})
 		return
 	}
-	
+
 	response := struct {
 		Content []struct {
 			Type string      `json:"type"`
@@ -291,7 +291,7 @@ func (h *Handler) handleToolCall(ctx context.Context, conn *jsonrpc2.Conn, req *
 		},
 		IsError: false,
 	}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }
 
@@ -299,13 +299,13 @@ func (h *Handler) handleResourcesList(ctx context.Context, conn *jsonrpc2.Conn, 
 	h.server.mu.RLock()
 	resources := h.server.resources
 	h.server.mu.RUnlock()
-	
+
 	response := struct {
 		Resources []Resource `json:"resources"`
 	}{
 		Resources: resources,
 	}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }
 
@@ -313,7 +313,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 	var params struct {
 		URI string `json:"uri"`
 	}
-	
+
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
@@ -321,7 +321,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 		})
 		return
 	}
-	
+
 	// Find the appropriate service handler
 	h.server.mu.RLock()
 	var handler ServiceHandler
@@ -338,7 +338,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 		}
 	}
 	h.server.mu.RUnlock()
-	
+
 	if handler == nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -346,7 +346,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 		})
 		return
 	}
-	
+
 	// Read the resource
 	result, err := handler.HandleResourceCall(ctx, params.URI)
 	if err != nil {
@@ -356,7 +356,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 		})
 		return
 	}
-	
+
 	response := struct {
 		Contents []struct {
 			URI      string `json:"uri"`
@@ -376,7 +376,7 @@ func (h *Handler) handleResourceRead(ctx context.Context, conn *jsonrpc2.Conn, r
 			},
 		},
 	}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }
 
@@ -392,7 +392,7 @@ func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req
 			Value string `json:"value"`
 		} `json:"argument"`
 	}
-	
+
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeInvalidParams,
@@ -400,7 +400,7 @@ func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req
 		})
 		return
 	}
-	
+
 	// For now, return empty completions
 	response := struct {
 		Completion struct {
@@ -413,6 +413,6 @@ func (h *Handler) handleCompletion(ctx context.Context, conn *jsonrpc2.Conn, req
 			Values: []string{},
 		},
 	}
-	
+
 	conn.Reply(ctx, req.ID, response)
 }

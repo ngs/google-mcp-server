@@ -31,17 +31,17 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 // ListCalendars lists all calendars
 func (c *Client) ListCalendars() ([]*calendar.CalendarListEntry, error) {
 	var calendars []*calendar.CalendarListEntry
-	
+
 	call := c.service.CalendarList.List()
 	err := call.Pages(c.ctx, func(page *calendar.CalendarList) error {
 		calendars = append(calendars, page.Items...)
 		return nil
 	})
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to list calendars: %w", err)
 	}
-	
+
 	return calendars, nil
 }
 
@@ -151,9 +151,9 @@ func (c *Client) QueryFreeBusy(calendarIDs []string, timeMin, timeMax time.Time)
 }
 
 // CreateEventFromDetails creates an event from basic details
-func (c *Client) CreateEventFromDetails(calendarID, summary, description, location string, 
+func (c *Client) CreateEventFromDetails(calendarID, summary, description, location string,
 	startTime, endTime time.Time, attendees []string, reminders []int) (*calendar.Event, error) {
-	
+
 	event := &calendar.Event{
 		Summary:     summary,
 		Description: description,

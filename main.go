@@ -112,7 +112,7 @@ func registerServices(ctx context.Context, srv *server.MCPServer, oauth *auth.OA
 func init() {
 	// Set up logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	
+
 	// Check for version flag
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println("google-mcp-server v0.1.0")

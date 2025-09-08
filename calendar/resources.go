@@ -33,20 +33,20 @@ func (h *Handler) HandleResourceCall(ctx context.Context, uri string) (interface
 	if !strings.HasPrefix(uri, "calendar://") {
 		return nil, fmt.Errorf("invalid calendar URI: %s", uri)
 	}
-	
+
 	path := strings.TrimPrefix(uri, "calendar://")
 	parts := strings.Split(path, "/")
-	
+
 	switch parts[0] {
 	case "primary":
 		if len(parts) > 1 && parts[1] == "events" {
 			return h.getPrimaryCalendarEvents(ctx)
 		}
 		return nil, fmt.Errorf("unknown primary calendar resource: %s", uri)
-		
+
 	case "calendars":
 		return h.getCalendarsList(ctx)
-		
+
 	default:
 		return nil, fmt.Errorf("unknown calendar resource: %s", uri)
 	}
@@ -58,13 +58,13 @@ func (h *Handler) getPrimaryCalendarEvents(ctx context.Context) (interface{}, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to get primary calendar events: %w", err)
 	}
-	
+
 	// Format events
 	result := make([]map[string]interface{}, len(events))
 	for i, event := range events {
 		result[i] = formatEvent(event)
 	}
-	
+
 	return map[string]interface{}{
 		"calendar": "primary",
 		"events":   result,
@@ -77,7 +77,7 @@ func (h *Handler) getCalendarsList(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to list calendars: %w", err)
 	}
-	
+
 	// Format calendars
 	result := make([]map[string]interface{}, len(calendars))
 	for i, cal := range calendars {
@@ -93,7 +93,7 @@ func (h *Handler) getCalendarsList(ctx context.Context) (interface{}, error) {
 			"timeZone":        cal.TimeZone,
 		}
 	}
-	
+
 	return map[string]interface{}{
 		"calendars": result,
 		"count":     len(result),

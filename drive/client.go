@@ -33,7 +33,7 @@ func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*drive.File, error) {
 	call := c.service.Files.List().
 		Fields("nextPageToken, files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)")
-	
+
 	if query != "" {
 		call = call.Q(query)
 	}
@@ -112,7 +112,7 @@ func (c *Client) UploadFile(name string, mimeType string, reader io.Reader, pare
 		Name:     name,
 		MimeType: mimeType,
 	}
-	
+
 	if parentID != "" {
 		file.Parents = []string{parentID}
 	}
@@ -154,7 +154,7 @@ func (c *Client) CreateFolder(name string, parentID string) (*drive.File, error)
 		Name:     name,
 		MimeType: "application/vnd.google-apps.folder",
 	}
-	
+
 	if parentID != "" {
 		folder.Parents = []string{parentID}
 	}
@@ -186,7 +186,7 @@ func (c *Client) MoveFile(fileID, newParentID string) (*drive.File, error) {
 		RemoveParents(removeParents).
 		Fields("id, parents").
 		Do()
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to move file: %w", err)
 	}
@@ -314,7 +314,7 @@ func (c *Client) UploadFileFromPath(filePath string, parentID string) (*drive.Fi
 
 	// Detect MIME type (simplified - in production use proper detection)
 	mimeType := "application/octet-stream"
-	
+
 	info, err := file.Stat()
 	if err != nil {
 		return nil, fmt.Errorf("failed to stat file: %w", err)
