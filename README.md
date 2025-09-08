@@ -12,13 +12,42 @@ A Model Context Protocol (MCP) server that integrates with Google APIs (Calendar
 
 ## Quick Start
 
+### macOS Quick Setup (Recommended)
+
+```bash
+# Install via Homebrew
+brew tap ngs/tap
+brew install google-mcp-server
+
+# Configure Claude Desktop (Apple Silicon)
+echo '{
+  "mcpServers": {
+    "google": {
+      "command": "/opt/homebrew/bin/google-mcp-server"
+    }
+  }
+}' > ~/Library/Application\ Support/Claude/claude_desktop_config.json
+
+# Run to authenticate (first time only)
+google-mcp-server
+```
+
+For detailed setup instructions, see below.
+
 ### Prerequisites
 
-1. Go 1.21 or later
-2. Google Cloud Project with APIs enabled
-3. OAuth 2.0 credentials from Google Cloud Console
+1. Google Cloud Project with APIs enabled
+2. OAuth 2.0 credentials from Google Cloud Console
+3. Go 1.20 or later (only for building from source)
 
 ### Installation
+
+#### Using Homebrew (macOS/Linux)
+
+```bash
+brew tap ngs/tap
+brew install google-mcp-server
+```
 
 #### From Source
 
@@ -33,6 +62,13 @@ go build
 ```bash
 go install go.ngs.io/google-mcp-server@latest
 ```
+
+#### Pre-built Binaries
+
+Download pre-built binaries from the [releases page](https://github.com/ngs/google-mcp-server/releases) for:
+- macOS (Intel & Apple Silicon)
+- Linux (x86_64 & ARM64)
+- Windows (x86_64)
 
 ### Setup
 
@@ -144,6 +180,24 @@ go install go.ngs.io/google-mcp-server@latest
 ## Usage Examples
 
 ### With Claude Desktop
+
+#### macOS (Homebrew Installation)
+
+If you installed via Homebrew, add to your Claude Desktop configuration (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "google": {
+      "command": "/opt/homebrew/bin/google-mcp-server"
+    }
+  }
+}
+```
+
+For Intel Macs, use `/usr/local/bin/google-mcp-server` instead.
+
+#### Other Installations
 
 Add to your Claude Desktop configuration:
 
