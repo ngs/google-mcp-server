@@ -9,6 +9,7 @@ import (
 	"io"
 
 	"go.ngs.io/google-mcp-server/server"
+	"google.golang.org/api/drive/v3"
 )
 
 // Handler implements the ServiceHandler interface for Drive
@@ -97,6 +98,10 @@ func (h *Handler) GetTools() []server.Tool {
 					"parent_id": {
 						Type:        "string",
 						Description: "Parent folder ID (optional)",
+					},
+					"convert_to_google_doc": {
+						Type:        "boolean",
+						Description: "Convert to Google Docs format (for HTML/text files)",
 					},
 				},
 				Required: []string{"name", "content"},
@@ -346,15 +351,16 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 
 	case "drive_file_upload":
 		var args struct {
-			Name     string `json:"name"`
-			Content  string `json:"content"`
-			MimeType string `json:"mime_type"`
-			ParentID string `json:"parent_id"`
+			Name              string `json:"name"`
+			Content           string `json:"content"`
+			MimeType          string `json:"mime_type"`
+			ParentID          string `json:"parent_id"`
+			ConvertToGoogleDoc bool   `json:"convert_to_google_doc"`
 		}
 		if err := json.Unmarshal(arguments, &args); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
-		return h.handleFileUpload(ctx, args.Name, args.Content, args.MimeType, args.ParentID)
+		return h.handleFileUpload(ctx, args.Name, args.Content, args.MimeType, args.ParentID, args.ConvertToGoogleDoc)
 
 	case "drive_file_get_metadata":
 		var args struct {
@@ -520,7 +526,7 @@ func (h *Handler) handleFileDownload(ctx context.Context, fileID string) (interf
 	}, nil
 }
 
-func (h *Handler) handleFileUpload(ctx context.Context, name, content, mimeType, parentID string) (interface{}, error) {
+func (h *Handler) handleFileUpload(ctx context.Context, name, content, mimeType, parentID string, convertToGoogleDoc bool) (interface{}, error) {
 	// Decode base64 content if needed
 	var reader io.Reader
 	if content != "" {
@@ -537,7 +543,17 @@ func (h *Handler) handleFileUpload(ctx context.Context, name, content, mimeType,
 		mimeType = "text/plain"
 	}
 
-	file, err := h.client.UploadFile(name, mimeType, reader, parentID)
+	var file *drive.File
+	var err error
+	
+	if convertToGoogleDoc {
+		// Use the new function to convert to Google Docs
+		file, err = h.client.UploadFileAsGoogleDoc(name, mimeType, reader, parentID)
+	} else {
+		// Regular file upload
+		file, err = h.client.UploadFile(name, mimeType, reader, parentID)
+	}
+	
 	if err != nil {
 		return nil, err
 	}

@@ -155,6 +155,40 @@ func (c *Client) UploadFile(name string, mimeType string, reader io.Reader, pare
 	return created, nil
 }
 
+// UploadFileAsGoogleDoc uploads a file and converts it to Google Docs format
+func (c *Client) UploadFileAsGoogleDoc(name string, sourceMimeType string, reader io.Reader, parentID string) (*drive.File, error) {
+	// Remove extension if present for Google Docs
+	if idx := len(name) - 5; idx > 0 && name[idx:] == ".html" {
+		name = name[:idx]
+	}
+	if idx := len(name) - 4; idx > 0 && name[idx:] == ".txt" {
+		name = name[:idx]
+	}
+	
+	file := &drive.File{
+		Name:     name,
+		MimeType: "application/vnd.google-apps.document", // Target Google Docs MIME type
+	}
+
+	if parentID != "" {
+		file.Parents = []string{parentID}
+	}
+
+	// Use Media upload with source MIME type for conversion
+	call := c.service.Files.Create(file)
+	if reader != nil {
+		// Upload with the source MIME type (e.g., text/html) for automatic conversion
+		call = call.Media(reader)
+	}
+
+	created, err := call.Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload file as Google Doc: %w", err)
+	}
+
+	return created, nil
+}
+
 // UpdateFileMetadata updates file metadata
 func (c *Client) UpdateFileMetadata(fileID, name, description string) (*drive.File, error) {
 	file := &drive.File{}

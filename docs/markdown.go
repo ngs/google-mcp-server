@@ -33,7 +33,8 @@ func (mc *MarkdownConverter) ConvertToRequests(markdown string) []*docs.Request 
 
 	// Process the markdown line by line to handle different elements
 	lines := strings.Split(markdown, "\n")
-	previousWasSpecialStyle := false
+	previousWasHeading := false
+	previousWasList := false
 
 	for i, line := range lines {
 		// Skip empty lines at the beginning of processing
@@ -41,7 +42,8 @@ func (mc *MarkdownConverter) ConvertToRequests(markdown string) []*docs.Request 
 			continue
 		}
 
-		lineIsSpecialStyle := false
+		lineIsHeading := false
+		lineIsList := false
 		isHeading := strings.HasPrefix(strings.TrimSpace(line), "#")
 		trimmedLine := strings.TrimSpace(line)
 		isList := strings.HasPrefix(trimmedLine, "- ") || strings.HasPrefix(trimmedLine, "* ") ||
@@ -56,56 +58,108 @@ func (mc *MarkdownConverter) ConvertToRequests(markdown string) []*docs.Request 
 
 		// Process different markdown elements
 		if strings.HasPrefix(strings.TrimSpace(line), "# ") {
+			// Always reset style before heading if coming from another style
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 1)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "## ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 2)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "### ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 3)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "#### ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 4)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "##### ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 5)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "###### ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createHeadingRequests(line, 6)...)
-			lineIsSpecialStyle = true
+			lineIsHeading = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "- ") || strings.HasPrefix(strings.TrimSpace(line), "* ") {
+			if previousWasHeading {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createBulletListRequests(line)...)
-			lineIsSpecialStyle = true
+			lineIsList = true
 		} else if mc.numberedListRegex.MatchString(strings.TrimSpace(line)) {
+			if previousWasHeading {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createNumberedListRequests(line)...)
-			lineIsSpecialStyle = true
+			lineIsList = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "> ") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			requests = append(requests, mc.createBlockquoteRequests(line)...)
-			lineIsSpecialStyle = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if previousWasHeading || previousWasList {
+				requests = append(requests, mc.insertStyleBreak()...)
+			}
 			// Handle code blocks - for simplicity, treat as plain text with monospace font
 			requests = append(requests, mc.createCodeBlockRequests(line)...)
-			lineIsSpecialStyle = true
 		} else {
 			// Regular paragraph with inline formatting
-			// Reset style to normal if previous line had special styling (but not if it was a list)
-			previousWasList := i > 0 && (strings.HasPrefix(strings.TrimSpace(lines[i-1]), "- ") ||
-				strings.HasPrefix(strings.TrimSpace(lines[i-1]), "* ") ||
-				regexp.MustCompile(`^\d+\. `).MatchString(strings.TrimSpace(lines[i-1])))
-
-			if previousWasSpecialStyle && !previousWasList && strings.TrimSpace(line) != "" {
-				requests = append(requests, mc.createNormalParagraphRequests(line)...)
-			} else if previousWasList && strings.TrimSpace(line) != "" {
-				// After a list, we need to explicitly reset
+			if previousWasHeading || previousWasList {
 				requests = append(requests, mc.createNormalParagraphRequests(line)...)
 			} else {
 				requests = append(requests, mc.createParagraphRequests(line)...)
 			}
 		}
 
-		previousWasSpecialStyle = lineIsSpecialStyle
+		previousWasHeading = lineIsHeading
+		previousWasList = lineIsList
 	}
 
+	return requests
+}
+
+// insertStyleBreak inserts a paragraph break to reset styling
+func (mc *MarkdownConverter) insertStyleBreak() []*docs.Request {
+	var requests []*docs.Request
+	
+	// Insert a newline
+	requests = append(requests, &docs.Request{
+		InsertText: &docs.InsertTextRequest{
+			Location: &docs.Location{Index: mc.currentIndex},
+			Text:     "\n",
+		},
+	})
+	mc.currentIndex += 1
+	
+	// Reset to normal text style
+	requests = append(requests, &docs.Request{
+		UpdateParagraphStyle: &docs.UpdateParagraphStyleRequest{
+			Range: &docs.Range{
+				StartIndex: mc.currentIndex - 1,
+				EndIndex:   mc.currentIndex,
+			},
+			ParagraphStyle: &docs.ParagraphStyle{
+				NamedStyleType: "NORMAL_TEXT",
+			},
+			Fields: "namedStyleType",
+		},
+	})
+	
 	return requests
 }
 
@@ -115,13 +169,21 @@ func (mc *MarkdownConverter) createHeadingRequests(line string, level int) []*do
 
 	// Extract heading text (remove # markers)
 	headingText := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#"))
-	if strings.HasPrefix(line, "\n") {
-		headingText = "\n" + headingText
+	
+	// Add newline before if needed
+	if mc.currentIndex > 1 {
+		requests = append(requests, &docs.Request{
+			InsertText: &docs.InsertTextRequest{
+				Location: &docs.Location{Index: mc.currentIndex},
+				Text:     "\n",
+			},
+		})
+		mc.currentIndex += 1
 	}
 
 	startIndex := mc.currentIndex
 
-	// Insert the heading text WITHOUT newline first
+	// Insert the heading text
 	requests = append(requests, &docs.Request{
 		InsertText: &docs.InsertTextRequest{
 			Location: &docs.Location{Index: mc.currentIndex},
@@ -145,16 +207,6 @@ func (mc *MarkdownConverter) createHeadingRequests(line string, level int) []*do
 			Fields: "namedStyleType",
 		},
 	})
-
-	// Now insert a newline as a separate paragraph to break the style
-	requests = append(requests, &docs.Request{
-		InsertText: &docs.InsertTextRequest{
-			Location: &docs.Location{Index: mc.currentIndex},
-			Text:     "\n",
-		},
-	})
-
-	mc.currentIndex += 1
 
 	return requests
 }
