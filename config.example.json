@@ -1,0 +1,62 @@
+{
+  "oauth": {
+    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
+    "client_secret": "YOUR_CLIENT_SECRET",
+    "redirect_uri": "http://localhost:8080/callback",
+    "token_file": "~/.google-mcp-token.json",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar",
+      "https://www.googleapis.com/auth/drive",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/photoslibrary",
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "services": {
+    "calendar": {
+      "enabled": true,
+      "default_calendar": "primary",
+      "reminder_minutes": 10,
+      "time_zone": "America/New_York"
+    },
+    "drive": {
+      "enabled": true,
+      "default_folder": "root",
+      "chunk_size": 5242880,
+      "max_retries": 3
+    },
+    "gmail": {
+      "enabled": true,
+      "send_limit": 250,
+      "default_labels": ["INBOX"],
+      "max_results": 100
+    },
+    "photos": {
+      "enabled": true,
+      "upload_quality": "original",
+      "auto_backup": false,
+      "max_batch_size": 50
+    },
+    "sheets": {
+      "enabled": true,
+      "default_range": "A1",
+      "batch_size": 1000,
+      "number_format": "#,##0.00",
+      "date_format": "2006-01-02"
+    },
+    "docs": {
+      "enabled": true,
+      "default_format": "text"
+    }
+  },
+  "global": {
+    "log_level": "info",
+    "timeout": 300,
+    "retry_count": 3,
+    "retry_delay": 1000,
+    "max_concurrency": 10
+  }
+}

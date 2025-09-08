@@ -1,0 +1,172 @@
+# Claude Code Instructions for Google MCP Server
+
+This document contains specific instructions for Claude Code when working with the Google MCP Server project.
+
+## Project Overview
+
+This is a Go-based MCP (Model Context Protocol) server that integrates with Google APIs including Calendar, Drive, Gmail, Photos, Sheets, and Docs. The server uses OAuth 2.0 for authentication and provides tools and resources accessible through MCP-compatible clients.
+
+## Development Guidelines
+
+### Code Style
+- Use Go idioms and best practices
+- Follow the existing code structure and patterns
+- Keep functions focused and single-purpose
+- Use meaningful variable and function names
+- Add error handling for all API calls
+
+### Testing
+Before committing any changes, always run:
+```bash
+go test ./...
+go fmt ./...
+```
+
+### Building
+To build the project:
+```bash
+go build -o google-mcp-server .
+```
+
+## Service Implementation Status
+
+### Fully Implemented
+- **Calendar Service** (`calendar/`): All 8 tools implemented with full functionality
+- **Drive Service** (`drive/`): All 16 tools implemented with full functionality
+
+### Stub Implementations (Need Extension)
+- **Gmail Service** (`gmail/`): Basic structure, needs full tool implementation
+- **Photos Service** (`photos/`): Basic structure, needs Photos Library API integration
+- **Sheets Service** (`sheets/`): Basic structure, needs additional operations
+- **Docs Service** (`docs/`): Basic structure, needs document manipulation tools
+
+## Common Tasks
+
+### Adding a New Tool to a Service
+
+1. Add the tool definition in `<service>/tools.go` in the `GetTools()` method
+2. Implement the handler in `HandleToolCall()` method
+3. Add the corresponding client method in `<service>/client.go`
+4. Update documentation in README.md
+
+### Updating Dependencies
+```bash
+go get -u ./...
+go mod tidy
+```
+
+### Running Tests
+```bash
+make test
+# or with coverage
+make test-coverage
+```
+
+## API Rate Limits to Consider
+
+- **Calendar**: 1,000,000 queries/day
+- **Drive**: 1,000,000,000 queries/day  
+- **Gmail**: 250 quota units/user/second
+- **Photos**: 10,000 requests/day
+- **Sheets**: 100 requests/100 seconds
+- **Docs**: 60 requests/minute
+
+Always implement exponential backoff for rate limit errors.
+
+## Security Considerations
+
+- Never log or expose OAuth tokens
+- Store tokens with restricted file permissions (0600)
+- Validate all user inputs before API calls
+- Use context timeouts for long-running operations
+
+## Known Issues and TODOs
+
+### High Priority
+- [ ] Complete Gmail service implementation (all tools from spec)
+- [ ] Implement Photos Library API properly (current stub uses simplified approach)
+- [ ] Add comprehensive unit tests for all services
+- [ ] Implement batch operations for better performance
+
+### Medium Priority
+- [ ] Add request caching where appropriate
+- [ ] Implement webhook support for real-time updates
+- [ ] Add metrics and monitoring capabilities
+- [ ] Create Docker container configuration
+
+### Low Priority
+- [ ] Add CLI configuration wizard
+- [ ] Implement service-specific rate limiting
+- [ ] Add request/response logging options
+- [ ] Create web-based configuration UI
+
+## Debugging Tips
+
+### OAuth Issues
+- Check if token file exists: `~/.google-mcp-token.json`
+- Verify all required APIs are enabled in Google Cloud Console
+- Ensure redirect URI matches exactly: `http://localhost:8080/callback`
+
+### MCP Connection Issues
+- Use `--debug` flag (when implemented) for verbose logging
+- Check JSON-RPC message format in server/mcp.go
+- Verify stdio stream handling is working correctly
+
+### API Errors
+- Check service-specific quotas in Google Cloud Console
+- Verify OAuth scopes match required permissions
+- Look for rate limiting errors (implement backoff)
+
+## File Structure Reference
+
+```
+.
+├── auth/           # OAuth authentication logic
+├── calendar/       # Google Calendar service
+│   ├── client.go   # API client wrapper
+│   ├── tools.go    # MCP tool implementations
+│   └── resources.go # MCP resource implementations
+├── drive/          # Google Drive service (same structure)
+├── gmail/          # Gmail service (needs completion)
+├── photos/         # Photos service (needs proper API)
+├── sheets/         # Sheets service (needs expansion)
+├── docs/           # Docs service (needs expansion)
+├── server/         # MCP server implementation
+├── config/         # Configuration management
+└── main.go         # Entry point
+```
+
+## Contact and Support
+
+For questions about implementation details or architectural decisions, refer to:
+- MCP Specification: https://spec.modelcontextprotocol.io/
+- Google API Documentation: https://developers.google.com/apis-explorer
+- Project Repository: https://github.com/ngs/google-mcp-server
+
+## Release Process
+
+1. Update version in main.go
+2. Run tests: `make test`
+3. Create git tag: `git tag v0.x.x`
+4. Push tag: `git push origin v0.x.x`
+5. GitHub Actions will handle the rest via GoReleaser
+
+## Performance Optimization Tips
+
+- Use batch requests where possible (especially for Sheets/Docs)
+- Implement pagination for large result sets
+- Cache frequently accessed resources
+- Use goroutines for parallel API calls (with proper rate limiting)
+- Minimize API calls by fetching only required fields
+
+## Error Handling Pattern
+
+Always follow this pattern for API errors:
+```go
+result, err := apiCall()
+if err != nil {
+    return nil, fmt.Errorf("failed to perform operation: %w", err)
+}
+```
+
+This ensures proper error wrapping and context throughout the call stack.
