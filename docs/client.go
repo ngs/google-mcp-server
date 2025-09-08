@@ -57,3 +57,74 @@ func (c *Client) BatchUpdate(documentID string, requests []*docs.Request) (*docs
 	}
 	return response, nil
 }
+
+// UpdateDocument updates a document's content
+func (c *Client) UpdateDocument(documentID string, content string, mode string) (*docs.BatchUpdateDocumentResponse, error) {
+	var requests []*docs.Request
+
+	if mode == "replace" {
+		// First, get the document to find the end index
+		doc, err := c.GetDocument(documentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get document for replacement: %w", err)
+		}
+
+		// Find the end index of the document content
+		endIndex := int64(1) // Default to 1 if document is empty
+		if doc.Body != nil && doc.Body.Content != nil && len(doc.Body.Content) > 0 {
+			lastElement := doc.Body.Content[len(doc.Body.Content)-1]
+			if lastElement.EndIndex > 0 {
+				endIndex = lastElement.EndIndex - 1 // Subtract 1 to avoid the final newline
+			}
+		}
+
+		// Delete existing content (if any)
+		if endIndex > 1 {
+			requests = append(requests, &docs.Request{
+				DeleteContentRange: &docs.DeleteContentRangeRequest{
+					Range: &docs.Range{
+						StartIndex: 1,
+						EndIndex:   endIndex,
+					},
+				},
+			})
+		}
+
+		// Insert new content at the beginning
+		requests = append(requests, &docs.Request{
+			InsertText: &docs.InsertTextRequest{
+				Location: &docs.Location{
+					Index: 1,
+				},
+				Text: content,
+			},
+		})
+	} else {
+		// Append mode: get the document to find where to append
+		doc, err := c.GetDocument(documentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get document for appending: %w", err)
+		}
+
+		// Find the end index to append content
+		appendIndex := int64(1) // Default to 1 if document is empty
+		if doc.Body != nil && doc.Body.Content != nil && len(doc.Body.Content) > 0 {
+			lastElement := doc.Body.Content[len(doc.Body.Content)-1]
+			if lastElement.EndIndex > 0 {
+				appendIndex = lastElement.EndIndex - 1 // Insert before the final newline
+			}
+		}
+
+		// Insert text at the end
+		requests = append(requests, &docs.Request{
+			InsertText: &docs.InsertTextRequest{
+				Location: &docs.Location{
+					Index: appendIndex,
+				},
+				Text: content,
+			},
+		})
+	}
+
+	return c.BatchUpdate(documentID, requests)
+}

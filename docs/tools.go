@@ -49,6 +49,28 @@ func (h *Handler) GetTools() []server.Tool {
 				Required: []string{"title"},
 			},
 		},
+		{
+			Name:        "docs_document_update",
+			Description: "Update document content (append text or replace all content)",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"document_id": {
+						Type:        "string",
+						Description: "Document ID",
+					},
+					"content": {
+						Type:        "string",
+						Description: "Text content to add to the document",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "Update mode: 'append' (default) or 'replace'",
+					},
+				},
+				Required: []string{"document_id", "content"},
+			},
+		},
 	}
 }
 
@@ -107,6 +129,35 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			"documentId": doc.DocumentId,
 			"title":      doc.Title,
 			"revisionId": doc.RevisionId,
+		}
+		return result, nil
+
+	case "docs_document_update":
+		var args struct {
+			DocumentID string `json:"document_id"`
+			Content    string `json:"content"`
+			Mode       string `json:"mode"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		// Default to append mode
+		if args.Mode == "" {
+			args.Mode = "append"
+		}
+
+		// Update the document
+		response, err := h.client.UpdateDocument(args.DocumentID, args.Content, args.Mode)
+		if err != nil {
+			return nil, err
+		}
+
+		// Format response
+		result := map[string]interface{}{
+			"documentId": response.DocumentId,
+			"replies":    len(response.Replies),
+			"success":    true,
 		}
 		return result, nil
 
