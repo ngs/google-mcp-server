@@ -99,17 +99,17 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		if doc.Body != nil && doc.Body.Content != nil {
 			var textContent string
 			var elements []map[string]interface{}
-			
+
 			for _, element := range doc.Body.Content {
 				elemData := map[string]interface{}{
 					"startIndex": element.StartIndex,
 					"endIndex":   element.EndIndex,
 				}
-				
+
 				if element.Paragraph != nil {
 					paragraph := element.Paragraph
 					paragraphData := map[string]interface{}{}
-					
+
 					// Add paragraph style information
 					if paragraph.ParagraphStyle != nil {
 						styleData := map[string]interface{}{}
@@ -126,7 +126,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 							paragraphData["style"] = styleData
 						}
 					}
-					
+
 					// Add bullet/list information
 					if paragraph.Bullet != nil {
 						bulletData := map[string]interface{}{
@@ -137,23 +137,23 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 						}
 						paragraphData["bullet"] = bulletData
 					}
-					
+
 					// Add text runs with their styles
 					var textRuns []map[string]interface{}
 					for _, elem := range paragraph.Elements {
 						if elem.TextRun != nil {
 							textRun := elem.TextRun
 							textContent += textRun.Content
-							
+
 							runData := map[string]interface{}{
 								"content": textRun.Content,
 							}
-							
+
 							// Add text style information
 							if textRun.TextStyle != nil {
 								style := textRun.TextStyle
 								styleData := map[string]interface{}{}
-								
+
 								if style.Bold {
 									styleData["bold"] = true
 								}
@@ -177,28 +177,28 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 										"blue":  rgb.Blue,
 									}
 								}
-								
+
 								if len(styleData) > 0 {
 									runData["style"] = styleData
 								}
 							}
-							
+
 							textRuns = append(textRuns, runData)
 						}
 					}
-					
+
 					if len(textRuns) > 0 {
 						paragraphData["textRuns"] = textRuns
 					}
-					
+
 					if len(paragraphData) > 0 {
 						elemData["paragraph"] = paragraphData
 					}
 				}
-				
+
 				elements = append(elements, elemData)
 			}
-			
+
 			result["content"] = textContent
 			result["elements"] = elements
 		}

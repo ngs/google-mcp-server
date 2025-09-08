@@ -106,8 +106,12 @@ func DefaultScopes() []string {
 
 // GetHTTPClient returns the authenticated HTTP client
 func (c *OAuthClient) GetHTTPClient() *http.Client {
+	// Debug: Try to identify deadlock
+	fmt.Fprintf(os.Stderr, "[DEBUG] GetHTTPClient: Attempting to acquire read lock...\n")
 	c.mu.RLock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] GetHTTPClient: Read lock acquired\n")
 	defer c.mu.RUnlock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] GetHTTPClient: Returning httpClient\n")
 	return c.httpClient
 }
 
@@ -121,12 +125,12 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	// Generate authorization URL
 	authURL := c.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
 
-	fmt.Printf("Opening browser for authentication...\n")
-	fmt.Printf("If browser doesn't open, visit this URL:\n%s\n", authURL)
+	fmt.Fprintf(os.Stderr, "Opening browser for authentication...\n")
+	fmt.Fprintf(os.Stderr, "If browser doesn't open, visit this URL:\n%s\n", authURL)
 
 	// Open browser
 	if err := browser.OpenURL(authURL); err != nil {
-		fmt.Printf("Failed to open browser: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to open browser: %v\n", err)
 	}
 
 	// Start local server to handle callback
@@ -172,7 +176,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 
 	// Shut down the server
 	if err := server.Shutdown(ctx); err != nil {
-		fmt.Printf("Warning: failed to shutdown callback server: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to shutdown callback server: %v\n", err)
 	}
 
 	// Exchange authorization code for token
@@ -188,10 +192,10 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 
 	// Save token for future use
 	if err := c.saveToken(); err != nil {
-		fmt.Printf("Warning: failed to save token: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to save token: %v\n", err)
 	}
 
-	fmt.Println("Authentication successful!")
+	fmt.Fprintln(os.Stderr, "Authentication successful!")
 	return nil
 }
 
@@ -251,21 +255,29 @@ func (c *OAuthClient) saveToken() error {
 
 // startTokenRefresh starts automatic token refresh
 func (c *OAuthClient) startTokenRefresh(ctx context.Context) {
+	fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Attempting to acquire lock...\n")
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Lock acquired\n")
 
 	if c.refreshTimer != nil {
 		c.refreshTimer.Stop()
 	}
 
 	if c.token == nil || c.token.RefreshToken == "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: No token or refresh token, unlocking\n")
+		c.mu.Unlock()
 		return
 	}
 
 	// Calculate time until token expires
 	timeUntilExpiry := time.Until(c.token.Expiry)
+	fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Time until expiry: %v\n", timeUntilExpiry)
 	if timeUntilExpiry <= 0 {
 		// Token already expired, refresh immediately
+		// Unlock before starting goroutine to avoid deadlock
+		fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Token expired, unlocking and starting refresh goroutine\n")
+		c.mu.Unlock()
+		fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Lock released, starting goroutine\n")
 		go c.refreshToken(ctx)
 		return
 	}
@@ -279,34 +291,77 @@ func (c *OAuthClient) startTokenRefresh(ctx context.Context) {
 	c.refreshTimer = time.AfterFunc(refreshTime, func() {
 		c.refreshToken(ctx)
 	})
+	fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Timer set, unlocking\n")
+	c.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] startTokenRefresh: Lock released\n")
 }
+
 
 // refreshToken refreshes the OAuth token
 func (c *OAuthClient) refreshToken(ctx context.Context) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] refreshToken: Starting token refresh\n")
 
-	if c.token == nil || c.token.RefreshToken == "" {
+	// Get current token without holding the lock for long
+	c.mu.RLock()
+	currentToken := c.token
+	c.mu.RUnlock()
+
+	if currentToken == nil || currentToken.RefreshToken == "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG] refreshToken: No token to refresh\n")
 		return
 	}
 
-	tokenSource := c.config.TokenSource(ctx, c.token)
+	// Perform the refresh operation without holding the lock
+	tokenSource := c.config.TokenSource(ctx, currentToken)
 	newToken, err := tokenSource.Token()
 	if err != nil {
-		fmt.Printf("Warning: failed to refresh token: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to refresh token: %v\n", err)
 		return
 	}
 
+	// Update the token with a write lock
+	fmt.Fprintf(os.Stderr, "[DEBUG] refreshToken: Updating token\n")
+	c.mu.Lock()
 	c.token = newToken
-	c.httpClient = c.config.Client(ctx, newToken)
+	c.mu.Unlock()
 
-	// Save the new token
+	// Save the new token (saveToken will acquire its own lock)
 	if err := c.saveToken(); err != nil {
-		fmt.Printf("Warning: failed to save refreshed token: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: failed to save refreshed token: %v\n", err)
 	}
 
+	// Re-acquire lock for scheduling
+	c.mu.Lock()
+
 	// Schedule next refresh
-	c.startTokenRefresh(ctx)
+	// Check if token is already expired
+	timeUntilExpiry := time.Until(c.token.Expiry)
+	if timeUntilExpiry <= 0 {
+		// Token already expired again, refresh immediately
+		c.mu.Unlock()
+		go func() {
+			// Small delay to ensure current function completes
+			time.Sleep(100 * time.Millisecond)
+			c.refreshToken(ctx)
+		}()
+		return
+	}
+
+	// Set up timer for next refresh (while still holding the lock)
+	if c.refreshTimer != nil {
+		c.refreshTimer.Stop()
+	}
+
+	refreshTime := timeUntilExpiry - 5*time.Minute
+	if refreshTime <= 0 {
+		refreshTime = 1 * time.Second
+	}
+
+	c.refreshTimer = time.AfterFunc(refreshTime, func() {
+		c.refreshToken(ctx)
+	})
+	c.mu.Unlock()
+	fmt.Fprintf(os.Stderr, "[DEBUG] refreshToken: Token refresh complete\n")
 }
 
 // Revoke revokes the current OAuth token

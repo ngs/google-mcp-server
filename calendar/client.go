@@ -16,6 +16,15 @@ type Client struct {
 
 // NewClient creates a new Calendar client
 func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
+	if oauth == nil {
+		return nil, fmt.Errorf("oauth client is nil")
+	}
+
+	httpClient := oauth.GetHTTPClient()
+	if httpClient == nil {
+		return nil, fmt.Errorf("http client is nil")
+	}
+
 	service, err := calendar.NewService(ctx, oauth.GetClientOption())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create calendar service: %w", err)

@@ -11,12 +11,14 @@ import (
 // MarkdownConverter converts Markdown text to Google Docs structured requests
 type MarkdownConverter struct {
 	currentIndex int64
+	numberedListRegex *regexp.Regexp
 }
 
 // NewMarkdownConverter creates a new MarkdownConverter instance
 func NewMarkdownConverter(startIndex int64) *MarkdownConverter {
 	return &MarkdownConverter{
 		currentIndex: startIndex,
+		numberedListRegex: regexp.MustCompile(`^\d+\. `),
 	}
 }
 
@@ -74,7 +76,7 @@ func (mc *MarkdownConverter) ConvertToRequests(markdown string) []*docs.Request 
 		} else if strings.HasPrefix(strings.TrimSpace(line), "- ") || strings.HasPrefix(strings.TrimSpace(line), "* ") {
 			requests = append(requests, mc.createBulletListRequests(line)...)
 			lineIsSpecialStyle = true
-		} else if matched, _ := regexp.MatchString(`^\d+\. `, strings.TrimSpace(line)); matched {
+		} else if mc.numberedListRegex.MatchString(strings.TrimSpace(line)) {
 			requests = append(requests, mc.createNumberedListRequests(line)...)
 			lineIsSpecialStyle = true
 		} else if strings.HasPrefix(strings.TrimSpace(line), "> ") {
@@ -87,10 +89,10 @@ func (mc *MarkdownConverter) ConvertToRequests(markdown string) []*docs.Request 
 		} else {
 			// Regular paragraph with inline formatting
 			// Reset style to normal if previous line had special styling (but not if it was a list)
-			previousWasList := i > 0 && (strings.HasPrefix(strings.TrimSpace(lines[i-1]), "- ") || 
+			previousWasList := i > 0 && (strings.HasPrefix(strings.TrimSpace(lines[i-1]), "- ") ||
 				strings.HasPrefix(strings.TrimSpace(lines[i-1]), "* ") ||
 				regexp.MustCompile(`^\d+\. `).MatchString(strings.TrimSpace(lines[i-1])))
-			
+
 			if previousWasSpecialStyle && !previousWasList && strings.TrimSpace(line) != "" {
 				requests = append(requests, mc.createNormalParagraphRequests(line)...)
 			} else if previousWasList && strings.TrimSpace(line) != "" {
@@ -151,7 +153,7 @@ func (mc *MarkdownConverter) createHeadingRequests(line string, level int) []*do
 			Text:     "\n",
 		},
 	})
-	
+
 	mc.currentIndex += 1
 
 	return requests

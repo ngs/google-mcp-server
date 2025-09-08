@@ -38,11 +38,22 @@ func main() {
 
 	// Initialize OAuth client
 	ctx := context.Background()
+	log.Println("[DEBUG] Creating OAuth client...")
 	oauthClient, err := auth.NewOAuthClient(ctx, cfg.OAuth)
 	if err != nil {
 		log.Fatalf("Failed to initialize OAuth client: %v", err)
 	}
-	// OAuth client initialized
+	log.Println("[DEBUG] OAuth client created successfully")
+
+	// Check if HTTP client is available
+	log.Println("[DEBUG] About to get HTTP client...")
+	httpClient := oauthClient.GetHTTPClient()
+	log.Println("[DEBUG] Got HTTP client")
+	if httpClient == nil {
+		log.Println("[WARNING] HTTP client is nil after OAuth initialization")
+	} else {
+		log.Println("[DEBUG] HTTP client is ready")
+	}
 
 	// Initialize MCP server
 	mcpServer := server.NewMCPServer(cfg)

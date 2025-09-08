@@ -148,7 +148,7 @@ func TestMarkdownConverter_createHeadingRequests(t *testing.T) {
 			} else if requests[1].UpdateParagraphStyle.ParagraphStyle.NamedStyleType != tt.wantStyle {
 				t.Errorf("Got style %s, want %s", requests[1].UpdateParagraphStyle.ParagraphStyle.NamedStyleType, tt.wantStyle)
 			}
-			
+
 			// Third request should be InsertText for newline
 			if requests[2].InsertText == nil {
 				t.Error("Third request should be InsertText for newline")
@@ -159,21 +159,21 @@ func TestMarkdownConverter_createHeadingRequests(t *testing.T) {
 
 func TestMarkdownConverter_createBulletListRequests(t *testing.T) {
 	tests := []struct {
-		name         string
-		line         string
-		startIdx     int64
+		name          string
+		line          string
+		startIdx      int64
 		expectNewline bool
 	}{
 		{
-			name:         "Dash bullet",
-			line:         "- Bullet item",
-			startIdx:     1,
+			name:          "Dash bullet",
+			line:          "- Bullet item",
+			startIdx:      1,
 			expectNewline: false, // First item in document
 		},
 		{
-			name:         "Asterisk bullet",
-			line:         "* Bullet item",
-			startIdx:     5,
+			name:          "Asterisk bullet",
+			line:          "* Bullet item",
+			startIdx:      5,
 			expectNewline: true, // Not first item
 		},
 	}
