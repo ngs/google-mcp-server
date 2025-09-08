@@ -103,6 +103,46 @@ func (h *Handler) GetTools() []server.Tool {
 			},
 		},
 		{
+			Name:        "drive_markdown_upload",
+			Description: "Upload a Markdown file as a Google Doc",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"name": {
+						Type:        "string",
+						Description: "Document name",
+					},
+					"markdown": {
+						Type:        "string",
+						Description: "Markdown content to convert and upload",
+					},
+					"parent_id": {
+						Type:        "string",
+						Description: "Parent folder ID (optional)",
+					},
+				},
+				Required: []string{"name", "markdown"},
+			},
+		},
+		{
+			Name:        "drive_markdown_replace",
+			Description: "Replace Google Doc content with converted Markdown",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"file_id": {
+						Type:        "string",
+						Description: "Google Doc file ID to update",
+					},
+					"markdown": {
+						Type:        "string",
+						Description: "Markdown content to convert and replace",
+					},
+				},
+				Required: []string{"file_id", "markdown"},
+			},
+		},
+		{
 			Name:        "drive_file_get_metadata",
 			Description: "Get metadata for a file",
 			InputSchema: server.InputSchema{
@@ -355,6 +395,27 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handleFileUpload(ctx, args.Name, args.Content, args.MimeType, args.ParentID)
+
+	case "drive_markdown_upload":
+		var args struct {
+			Name     string `json:"name"`
+			Markdown string `json:"markdown"`
+			ParentID string `json:"parent_id"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		return h.handleMarkdownUpload(ctx, args.Name, args.Markdown, args.ParentID)
+
+	case "drive_markdown_replace":
+		var args struct {
+			FileID   string `json:"file_id"`
+			Markdown string `json:"markdown"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		return h.handleMarkdownReplace(ctx, args.FileID, args.Markdown)
 
 	case "drive_file_get_metadata":
 		var args struct {
@@ -686,4 +747,34 @@ func formatFiles(files interface{}) []map[string]interface{} {
 	jsonData, _ := json.Marshal(files)
 	_ = json.Unmarshal(jsonData, &result)
 	return result
+}
+
+func (h *Handler) handleMarkdownUpload(ctx context.Context, name, markdown, parentID string) (interface{}, error) {
+	file, err := h.client.UploadMarkdownAsDoc(ctx, name, markdown, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload markdown as doc: %w", err)
+	}
+
+	return map[string]interface{}{
+		"fileId":      file.Id,
+		"name":        file.Name,
+		"mimeType":    file.MimeType,
+		"webViewLink": file.WebViewLink,
+		"createdTime": file.CreatedTime,
+	}, nil
+}
+
+func (h *Handler) handleMarkdownReplace(ctx context.Context, fileID, markdown string) (interface{}, error) {
+	file, err := h.client.ReplaceDocWithMarkdown(ctx, fileID, markdown)
+	if err != nil {
+		return nil, fmt.Errorf("failed to replace doc with markdown: %w", err)
+	}
+
+	return map[string]interface{}{
+		"fileId":       file.Id,
+		"name":         file.Name,
+		"mimeType":     file.MimeType,
+		"webViewLink":  file.WebViewLink,
+		"modifiedTime": file.ModifiedTime,
+	}, nil
 }

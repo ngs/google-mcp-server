@@ -1,13 +1,23 @@
 package drive
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
+	chromahtml "github.com/alecthomas/chroma/v2/formatters/html"
+	"github.com/yuin/goldmark"
+	emoji "github.com/yuin/goldmark-emoji"
+	highlighting "github.com/yuin/goldmark-highlighting/v2"
+	meta "github.com/yuin/goldmark-meta"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 	"go.ngs.io/google-mcp-server/auth"
 	"google.golang.org/api/drive/v3"
 )
@@ -346,4 +356,180 @@ func (c *Client) UploadFileFromPath(filePath string, parentID string) (*drive.Fi
 	}
 
 	return c.UploadFile(info.Name(), mimeType, file, parentID)
+}
+
+// convertMarkdownToHTML converts markdown content to HTML using goldmark with all extensions
+func convertMarkdownToHTML(markdown string) (string, error) {
+	// Create goldmark instance with all extensions
+	md := goldmark.New(
+		goldmark.WithExtensions(
+			extension.GFM,            // GitHub Flavored Markdown
+			extension.Footnote,       // Footnotes
+			extension.DefinitionList, // Definition lists
+			extension.Typographer,    // Typography replacements
+			extension.Linkify,        // Auto-linkify URLs
+			extension.Strikethrough,  // Strikethrough text
+			extension.TaskList,       // Task lists
+			extension.Table,          // Tables
+			emoji.Emoji,              // Emoji support
+			highlighting.NewHighlighting(
+				highlighting.WithStyle("github"),
+				highlighting.WithFormatOptions(
+					chromahtml.WithClasses(false),
+					chromahtml.PreventSurroundingPre(false),
+					chromahtml.WithLineNumbers(false),
+					chromahtml.LineNumbersInTable(false),
+				),
+			),
+			meta.Meta, // YAML frontmatter
+		),
+		goldmark.WithParserOptions(
+			parser.WithAutoHeadingID(), // Auto-generate heading IDs
+			parser.WithAttribute(),     // Allow attributes
+			parser.WithBlockParsers(),
+			parser.WithInlineParsers(),
+			parser.WithParagraphTransformers(),
+		),
+		goldmark.WithRendererOptions(
+			goldmarkhtml.WithHardWraps(), // Preserve line breaks
+			goldmarkhtml.WithXHTML(),     // Generate XHTML
+			goldmarkhtml.WithUnsafe(),    // Allow raw HTML
+		),
+	)
+
+	var buf bytes.Buffer
+	// Wrap in HTML document structure for Google Docs
+	buf.WriteString(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }
+pre { 
+  background-color: rgb(243, 243, 243);
+  padding: 16px; 
+  border-radius: 8px; 
+  overflow-x: auto; 
+  border: 1px solid rgb(220, 220, 220);
+  display: block;
+  font-family: 'Courier New', Consolas, Monaco, monospace;
+  font-size: 14px;
+  line-height: 1.4;
+  white-space: pre;
+}
+pre code {
+  background-color: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: #24292e;
+  font-size: inherit;
+}
+code { 
+  background-color: rgb(243, 243, 243);
+  padding: 2px 6px; 
+  border-radius: 3px; 
+  font-family: 'Courier New', Consolas, Monaco, monospace; 
+  font-size: 0.9em;
+  color: #24292e;
+  border: 1px solid rgb(220, 220, 220);
+}
+blockquote { border-left: 4px solid #ddd; margin: 0; padding-left: 16px; color: #666; }
+table { border-collapse: collapse; width: 100%; margin: 15px 0; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background-color: #f2f2f2; font-weight: bold; }
+tr:nth-child(even) { background-color: #f9f9f9; }
+h1, h2, h3, h4, h5, h6 { margin-top: 24px; margin-bottom: 16px; font-weight: 600; }
+ul, ol { margin: 10px 0; padding-left: 30px; }
+li { margin: 5px 0; }
+a { color: #0066cc; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.task-list-item { list-style-type: none; }
+.task-list-item input { margin-right: 8px; }
+.highlight { background-color: transparent; }
+.highlight pre { background-color: rgb(243, 243, 243); }
+</style>
+</head>
+<body>
+`)
+
+	// Convert markdown to HTML
+	if err := md.Convert([]byte(markdown), &buf); err != nil {
+		return "", fmt.Errorf("failed to convert markdown to HTML: %w", err)
+	}
+
+	buf.WriteString(`
+</body>
+</html>`)
+
+	return buf.String(), nil
+}
+
+// UploadMarkdownAsDoc uploads markdown content as a Google Doc
+func (c *Client) UploadMarkdownAsDoc(ctx context.Context, name, markdown, parentID string) (*drive.File, error) {
+	// Convert markdown to HTML
+	htmlContent, err := convertMarkdownToHTML(markdown)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert markdown: %w", err)
+	}
+
+	// Create file metadata
+	file := &drive.File{
+		Name:     name,
+		MimeType: "application/vnd.google-apps.document",
+	}
+
+	if parentID != "" {
+		file.Parents = []string{parentID}
+	}
+
+	// Upload as Google Doc
+	reader := strings.NewReader(htmlContent)
+	driveFile, err := c.service.Files.Create(file).
+		Media(reader).
+		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, createdTime").
+		Context(ctx).
+		Do()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to upload file: %w", err)
+	}
+
+	return driveFile, nil
+}
+
+// ReplaceDocWithMarkdown replaces a Google Doc's content with converted markdown
+func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown string) (*drive.File, error) {
+	// First, get the file metadata to ensure it's a Google Doc
+	file, err := c.service.Files.Get(fileID).
+		Fields("id, name, mimeType").
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get file metadata: %w", err)
+	}
+
+	// Check if it's a Google Doc
+	if file.MimeType != "application/vnd.google-apps.document" {
+		return nil, fmt.Errorf("file is not a Google Doc (mimeType: %s)", file.MimeType)
+	}
+
+	// Convert markdown to HTML
+	htmlContent, err := convertMarkdownToHTML(markdown)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert markdown: %w", err)
+	}
+
+	// Update the file content
+	reader := strings.NewReader(htmlContent)
+	updatedFile, err := c.service.Files.Update(fileID, &drive.File{}).
+		Media(reader).
+		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink").
+		Context(ctx).
+		Do()
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to update file: %w", err)
+	}
+
+	return updatedFile, nil
 }
