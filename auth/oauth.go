@@ -252,19 +252,20 @@ func (c *OAuthClient) saveToken() error {
 // startTokenRefresh starts automatic token refresh
 func (c *OAuthClient) startTokenRefresh(ctx context.Context) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if c.refreshTimer != nil {
 		c.refreshTimer.Stop()
 	}
 
 	if c.token == nil || c.token.RefreshToken == "" {
+		c.mu.Unlock()
 		return
 	}
 
 	// Calculate time until token expires
 	timeUntilExpiry := time.Until(c.token.Expiry)
 	if timeUntilExpiry <= 0 {
+		c.mu.Unlock()
 		// Token already expired, refresh immediately
 		go c.refreshToken(ctx)
 		return
@@ -279,34 +280,65 @@ func (c *OAuthClient) startTokenRefresh(ctx context.Context) {
 	c.refreshTimer = time.AfterFunc(refreshTime, func() {
 		c.refreshToken(ctx)
 	})
+	c.mu.Unlock()
 }
 
 // refreshToken refreshes the OAuth token
 func (c *OAuthClient) refreshToken(ctx context.Context) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	currentToken := c.token
+	c.mu.RUnlock()
 
-	if c.token == nil || c.token.RefreshToken == "" {
+	if currentToken == nil || currentToken.RefreshToken == "" {
 		return
 	}
 
-	tokenSource := c.config.TokenSource(ctx, c.token)
+	tokenSource := c.config.TokenSource(ctx, currentToken)
 	newToken, err := tokenSource.Token()
 	if err != nil {
 		fmt.Printf("Warning: failed to refresh token: %v\n", err)
 		return
 	}
 
+	c.mu.Lock()
 	c.token = newToken
-	c.httpClient = c.config.Client(ctx, newToken)
+	c.mu.Unlock()
 
 	// Save the new token
 	if err := c.saveToken(); err != nil {
 		fmt.Printf("Warning: failed to save refreshed token: %v\n", err)
 	}
 
+	c.mu.Lock()
+
 	// Schedule next refresh
-	c.startTokenRefresh(ctx)
+	// Check if token is already expired
+	timeUntilExpiry := time.Until(c.token.Expiry)
+	if timeUntilExpiry <= 0 {
+		// Token already expired again, refresh immediately
+		c.mu.Unlock()
+		go func() {
+			// Small delay to ensure current function completes
+			time.Sleep(100 * time.Millisecond)
+			c.refreshToken(ctx)
+		}()
+		return
+	}
+
+	// Set up timer for next refresh (while still holding the lock)
+	if c.refreshTimer != nil {
+		c.refreshTimer.Stop()
+	}
+
+	refreshTime := timeUntilExpiry - 5*time.Minute
+	if refreshTime <= 0 {
+		refreshTime = 1 * time.Second
+	}
+
+	c.refreshTimer = time.AfterFunc(refreshTime, func() {
+		c.refreshToken(ctx)
+	})
+	c.mu.Unlock()
 }
 
 // Revoke revokes the current OAuth token
