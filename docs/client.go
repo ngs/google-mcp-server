@@ -58,9 +58,10 @@ func (c *Client) BatchUpdate(documentID string, requests []*docs.Request) (*docs
 	return response, nil
 }
 
-// UpdateDocument updates a document's content
+// UpdateDocument updates a document's content with markdown formatting
 func (c *Client) UpdateDocument(documentID string, content string, mode string) (*docs.BatchUpdateDocumentResponse, error) {
 	var requests []*docs.Request
+	var startIndex int64
 
 	if mode == "replace" {
 		// First, get the document to find the end index
@@ -90,15 +91,7 @@ func (c *Client) UpdateDocument(documentID string, content string, mode string) 
 			})
 		}
 
-		// Insert new content at the beginning
-		requests = append(requests, &docs.Request{
-			InsertText: &docs.InsertTextRequest{
-				Location: &docs.Location{
-					Index: 1,
-				},
-				Text: content,
-			},
-		})
+		startIndex = 1
 	} else {
 		// Append mode: get the document to find where to append
 		doc, err := c.GetDocument(documentID)
@@ -107,24 +100,21 @@ func (c *Client) UpdateDocument(documentID string, content string, mode string) 
 		}
 
 		// Find the end index to append content
-		appendIndex := int64(1) // Default to 1 if document is empty
+		startIndex = int64(1) // Default to 1 if document is empty
 		if doc.Body != nil && doc.Body.Content != nil && len(doc.Body.Content) > 0 {
 			lastElement := doc.Body.Content[len(doc.Body.Content)-1]
 			if lastElement.EndIndex > 0 {
-				appendIndex = lastElement.EndIndex - 1 // Insert before the final newline
+				startIndex = lastElement.EndIndex - 1 // Insert before the final newline
 			}
 		}
-
-		// Insert text at the end
-		requests = append(requests, &docs.Request{
-			InsertText: &docs.InsertTextRequest{
-				Location: &docs.Location{
-					Index: appendIndex,
-				},
-				Text: content,
-			},
-		})
 	}
+
+	// Convert markdown to rich text requests
+	converter := NewMarkdownConverter(startIndex)
+	markdownRequests := converter.ConvertToRequests(content)
+
+	// Add the markdown requests to our request list
+	requests = append(requests, markdownRequests...)
 
 	return c.BatchUpdate(documentID, requests)
 }

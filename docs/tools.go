@@ -95,19 +95,112 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			"title":      doc.Title,
 		}
 
-		// Extract text content from body
+		// Extract text content and structure from body
 		if doc.Body != nil && doc.Body.Content != nil {
 			var textContent string
+			var elements []map[string]interface{}
+			
 			for _, element := range doc.Body.Content {
+				elemData := map[string]interface{}{
+					"startIndex": element.StartIndex,
+					"endIndex":   element.EndIndex,
+				}
+				
 				if element.Paragraph != nil {
-					for _, elem := range element.Paragraph.Elements {
-						if elem.TextRun != nil {
-							textContent += elem.TextRun.Content
+					paragraph := element.Paragraph
+					paragraphData := map[string]interface{}{}
+					
+					// Add paragraph style information
+					if paragraph.ParagraphStyle != nil {
+						styleData := map[string]interface{}{}
+						if paragraph.ParagraphStyle.NamedStyleType != "" {
+							styleData["namedStyleType"] = paragraph.ParagraphStyle.NamedStyleType
+						}
+						if paragraph.ParagraphStyle.HeadingId != "" {
+							styleData["headingId"] = paragraph.ParagraphStyle.HeadingId
+						}
+						if paragraph.ParagraphStyle.IndentStart != nil {
+							styleData["indentStart"] = paragraph.ParagraphStyle.IndentStart.Magnitude
+						}
+						if len(styleData) > 0 {
+							paragraphData["style"] = styleData
 						}
 					}
+					
+					// Add bullet/list information
+					if paragraph.Bullet != nil {
+						bulletData := map[string]interface{}{
+							"nestingLevel": paragraph.Bullet.NestingLevel,
+						}
+						if paragraph.Bullet.ListId != "" {
+							bulletData["listId"] = paragraph.Bullet.ListId
+						}
+						paragraphData["bullet"] = bulletData
+					}
+					
+					// Add text runs with their styles
+					var textRuns []map[string]interface{}
+					for _, elem := range paragraph.Elements {
+						if elem.TextRun != nil {
+							textRun := elem.TextRun
+							textContent += textRun.Content
+							
+							runData := map[string]interface{}{
+								"content": textRun.Content,
+							}
+							
+							// Add text style information
+							if textRun.TextStyle != nil {
+								style := textRun.TextStyle
+								styleData := map[string]interface{}{}
+								
+								if style.Bold {
+									styleData["bold"] = true
+								}
+								if style.Italic {
+									styleData["italic"] = true
+								}
+								if style.Underline {
+									styleData["underline"] = true
+								}
+								if style.Strikethrough {
+									styleData["strikethrough"] = true
+								}
+								if style.WeightedFontFamily != nil && style.WeightedFontFamily.FontFamily != "" {
+									styleData["fontFamily"] = style.WeightedFontFamily.FontFamily
+								}
+								if style.ForegroundColor != nil && style.ForegroundColor.Color != nil && style.ForegroundColor.Color.RgbColor != nil {
+									rgb := style.ForegroundColor.Color.RgbColor
+									styleData["color"] = map[string]float64{
+										"red":   rgb.Red,
+										"green": rgb.Green,
+										"blue":  rgb.Blue,
+									}
+								}
+								
+								if len(styleData) > 0 {
+									runData["style"] = styleData
+								}
+							}
+							
+							textRuns = append(textRuns, runData)
+						}
+					}
+					
+					if len(textRuns) > 0 {
+						paragraphData["textRuns"] = textRuns
+					}
+					
+					if len(paragraphData) > 0 {
+						elemData["paragraph"] = paragraphData
+					}
 				}
+				
+				elements = append(elements, elemData)
 			}
+			
 			result["content"] = textContent
+			result["elements"] = elements
 		}
 
 		return result, nil
