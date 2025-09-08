@@ -47,10 +47,11 @@ type InputSchema struct {
 
 // Property represents a property in the input schema
 type Property struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	Items       *Property `json:"items,omitempty"`
-	Enum        []string  `json:"enum,omitempty"`
+	Type        string              `json:"type"`
+	Description string              `json:"description"`
+	Items       *Property           `json:"items,omitempty"`
+	Enum        []string            `json:"enum,omitempty"`
+	Properties  map[string]Property `json:"properties,omitempty"`
 }
 
 // Resource represents an MCP resource

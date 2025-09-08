@@ -10,12 +10,16 @@ import (
 
 // Handler implements the ServiceHandler interface for Docs
 type Handler struct {
-	client *Client
+	client  *Client
+	updater *DocumentUpdater
 }
 
 // NewHandler creates a new Docs handler
 func NewHandler(client *Client) *Handler {
-	return &Handler{client: client}
+	return &Handler{
+		client:  client,
+		updater: NewDocumentUpdater(client),
+	}
 }
 
 // GetTools returns the available Docs tools
@@ -69,6 +73,129 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 				},
 				Required: []string{"document_id", "content"},
+			},
+		},
+		{
+			Name:        "docs_document_batch_update",
+			Description: "Perform batch updates on a document with formatting",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"document_id": {
+						Type:        "string",
+						Description: "Document ID",
+					},
+					"requests": {
+						Type:        "array",
+						Description: "Array of batch update requests",
+						Items: &server.Property{
+							Type: "object",
+							Properties: map[string]server.Property{
+								"type": {
+									Type:        "string",
+									Description: "Request type: insertText, updateParagraphStyle, updateTextStyle, deleteContentRange",
+								},
+								"text": {
+									Type:        "string",
+									Description: "Text to insert (for insertText)",
+								},
+								"location": {
+									Type:        "number",
+									Description: "Index location for operation",
+								},
+								"startIndex": {
+									Type:        "number",
+									Description: "Start index for range operations",
+								},
+								"endIndex": {
+									Type:        "number",
+									Description: "End index for range operations",
+								},
+								"paragraphStyle": {
+									Type:        "object",
+									Description: "Paragraph style settings",
+									Properties: map[string]server.Property{
+										"namedStyleType": {
+											Type:        "string",
+											Description: "Named style type: NORMAL_TEXT, TITLE, HEADING_1, HEADING_2, etc.",
+										},
+										"alignment": {
+											Type:        "string",
+											Description: "Text alignment: START, CENTER, END, JUSTIFIED",
+										},
+									},
+								},
+								"textStyle": {
+									Type:        "object",
+									Description: "Text style settings",
+									Properties: map[string]server.Property{
+										"bold": {
+											Type:        "boolean",
+											Description: "Bold text",
+										},
+										"italic": {
+											Type:        "boolean",
+											Description: "Italic text",
+										},
+										"underline": {
+											Type:        "boolean",
+											Description: "Underlined text",
+										},
+										"fontSize": {
+											Type:        "number",
+											Description: "Font size in points",
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+				Required: []string{"document_id", "requests"},
+			},
+		},
+		{
+			Name:        "docs_document_format",
+			Description: "Format document content with rich text styles using Markdown",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"document_id": {
+						Type:        "string",
+						Description: "Document ID",
+					},
+					"markdown_content": {
+						Type:        "string",
+						Description: "Markdown formatted content to convert to rich text",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "Update mode: 'append' (default) or 'replace'",
+					},
+				},
+				Required: []string{"document_id", "markdown_content"},
+			},
+		},
+		{
+			Name:        "docs_document_update_html",
+			Description: "Update document with HTML content",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"document_id": {
+						Type:        "string",
+						Description: "Document ID",
+					},
+					"html_content": {
+						Type:        "string",
+						Description: "HTML content to convert to rich text",
+					},
+					"mode": {
+						Type:        "string",
+						Description: "Update mode: 'append' (default) or 'replace'",
+					},
+				},
+				Required: []string{"document_id", "html_content"},
 			},
 		},
 	}
@@ -149,6 +276,93 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 
 		// Update the document
 		response, err := h.client.UpdateDocument(args.DocumentID, args.Content, args.Mode)
+		if err != nil {
+			return nil, err
+		}
+
+		// Format response
+		result := map[string]interface{}{
+			"documentId": response.DocumentId,
+			"replies":    len(response.Replies),
+			"success":    true,
+		}
+		return result, nil
+
+	case "docs_document_batch_update":
+		var args struct {
+			DocumentID string                   `json:"document_id"`
+			Requests   []map[string]interface{} `json:"requests"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		// Convert requests to Google Docs API format
+		requests, err := h.convertBatchRequests(args.Requests)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert requests: %w", err)
+		}
+
+		// Execute batch update
+		response, err := h.client.BatchUpdate(args.DocumentID, requests)
+		if err != nil {
+			return nil, err
+		}
+
+		// Format response
+		result := map[string]interface{}{
+			"documentId": response.DocumentId,
+			"replies":    len(response.Replies),
+			"success":    true,
+		}
+		return result, nil
+
+	case "docs_document_format":
+		var args struct {
+			DocumentID      string `json:"document_id"`
+			MarkdownContent string `json:"markdown_content"`
+			Mode            string `json:"mode"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		// Default to append mode
+		if args.Mode == "" {
+			args.Mode = "append"
+		}
+
+		// Use the DocumentUpdater to handle markdown conversion and API calls
+		response, err := h.updater.UpdateWithMarkdown(ctx, args.DocumentID, args.MarkdownContent, args.Mode)
+		if err != nil {
+			return nil, err
+		}
+
+		// Format response
+		result := map[string]interface{}{
+			"documentId": response.DocumentId,
+			"replies":    len(response.Replies),
+			"success":    true,
+		}
+		return result, nil
+
+	case "docs_document_update_html":
+		var args struct {
+			DocumentID  string `json:"document_id"`
+			HTMLContent string `json:"html_content"`
+			Mode        string `json:"mode"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		// Default to append mode
+		if args.Mode == "" {
+			args.Mode = "append"
+		}
+
+		// Use the DocumentUpdater to handle HTML conversion and API calls
+		response, err := h.updater.UpdateWithHTML(ctx, args.DocumentID, args.HTMLContent, args.Mode)
 		if err != nil {
 			return nil, err
 		}

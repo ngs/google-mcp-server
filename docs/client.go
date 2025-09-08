@@ -13,6 +13,9 @@ type Client struct {
 	service *docs.Service
 }
 
+// Ensure Client implements ClientInterface
+var _ ClientInterface = (*Client)(nil)
+
 // NewClient creates a new Docs client
 func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
 	service, err := docs.NewService(ctx, oauth.GetClientOption())
