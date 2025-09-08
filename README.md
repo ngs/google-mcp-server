@@ -211,6 +211,108 @@ Add to your Claude Desktop configuration:
 }
 ```
 
+### With Claude Code
+
+Claude Code users can set up the Google MCP Server using either the `claude mcp add` command or manual configuration:
+
+#### Method 1: Using claude mcp add (Recommended)
+
+1. **Install the server** (if not already installed):
+   ```bash
+   # Using Homebrew (recommended for macOS)
+   brew tap ngs/tap
+   brew install google-mcp-server
+   
+   # Or build from source
+   git clone https://github.com/ngs/google-mcp-server.git
+   cd google-mcp-server
+   go build
+   ```
+
+2. **Add the MCP server to Claude Code**:
+   ```bash
+   # If installed via Homebrew (Apple Silicon)
+   claude mcp add google /opt/homebrew/bin/google-mcp-server
+   
+   # If installed via Homebrew (Intel Mac)
+   claude mcp add google /usr/local/bin/google-mcp-server
+   
+   # If built from source
+   claude mcp add google /path/to/your/google-mcp-server/google-mcp-server
+   ```
+
+3. **Configure OAuth credentials**:
+   - Follow the Google Cloud Project setup steps above
+   - Create a `config.json` file with your OAuth credentials in the current directory or home directory
+   - Or set environment variables in your shell profile:
+     ```bash
+     export GOOGLE_CLIENT_ID="YOUR_CLIENT_ID.apps.googleusercontent.com"
+     export GOOGLE_CLIENT_SECRET="YOUR_CLIENT_SECRET"
+     ```
+
+4. **Authenticate** (first time only):
+   ```bash
+   # Run the server directly to complete OAuth flow
+   google-mcp-server
+   # This will open a browser for authentication
+   # Grant the requested permissions
+   # The token will be saved to ~/.google-mcp-token.json
+   ```
+
+5. **Restart Claude Code** to apply the changes:
+   ```bash
+   # The MCP server will be available after restarting Claude Code
+   ```
+
+#### Method 2: Manual Configuration
+
+1. **Install the server** (same as Method 1, step 1)
+
+2. **Configure OAuth credentials** (same as Method 1, step 3)
+
+3. **Authenticate** (same as Method 1, step 4)
+
+4. **Manually configure Claude Code**:
+   
+   Add the MCP server to your Claude Code configuration. Create or edit `~/.claude/config.json`:
+   
+   ```json
+   {
+     "mcpServers": {
+       "google": {
+         "command": "/opt/homebrew/bin/google-mcp-server"
+       }
+     }
+   }
+   ```
+   
+   Or if you built from source:
+   ```json
+   {
+     "mcpServers": {
+       "google": {
+         "command": "/path/to/your/google-mcp-server/google-mcp-server"
+       }
+     }
+   }
+   ```
+
+#### Verify the Setup
+
+In Claude Code, you can test the connection by asking:
+- "List my Google calendars"
+- "Show my recent Gmail messages"
+- "List files in my Google Drive"
+
+#### Troubleshooting Claude Code Setup
+
+- **Check MCP server list**: Run `claude mcp list` to verify the server is registered
+- **Remove and re-add**: If issues persist, use `claude mcp remove google` then add it again
+- **Ensure executable permissions**: `chmod +x /path/to/google-mcp-server`
+- **Verify token file**: Check that `~/.google-mcp-token.json` exists after authentication
+- **Test server directly**: Run `google-mcp-server --version` to ensure it works
+- **Check Claude Code logs**: Look for MCP server errors in Claude Code output
+
 ### Programmatic Usage
 
 ```python
