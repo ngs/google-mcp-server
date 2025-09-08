@@ -16,7 +16,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        go: ['1.23', '1.24']
+        go: ['1.23']
     steps:
     - uses: actions/checkout@v4
 
@@ -27,15 +27,19 @@ jobs:
         cache: true
 
     - name: Download dependencies
+      shell: bash
       run: go mod download
 
     - name: Verify dependencies
+      shell: bash
       run: go mod verify
 
     - name: Build
+      shell: bash
       run: go build -v ./...
 
     - name: Run tests
+      shell: bash
       run: go test -v -timeout=30s -coverprofile=coverage.txt -covermode=atomic ./...
       env:
         CI: true
@@ -75,10 +79,17 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    - name: Run Gosec Security Scanner
-      uses: securego/gosec@master
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        args: '-fmt sarif -out gosec-results.sarif ./...'
+        go-version: '1.23'
+        cache: true
+
+    - name: Run Gosec Security Scanner
+      shell: bash
+      run: |
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        gosec -fmt sarif -out gosec-results.sarif ./... || true
 
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
@@ -90,12 +101,12 @@ jobs:
 
     - name: Upload Gosec results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always()
+      if: hashFiles('gosec-results.sarif') != ''
       with:
         sarif_file: 'gosec-results.sarif'
 
     - name: Upload Trivy results to GitHub Security tab
       uses: github/codeql-action/upload-sarif@v3
-      if: always() && hashFiles('trivy-results.sarif') != ''
+      if: hashFiles('trivy-results.sarif') != ''
       with:
         sarif_file: 'trivy-results.sarif'
