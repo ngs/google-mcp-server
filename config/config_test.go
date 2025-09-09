@@ -12,7 +12,6 @@ func TestConfigDefaults(t *testing.T) {
 			Calendar: CalendarConfig{Enabled: true},
 			Drive:    DriveConfig{Enabled: true},
 			Gmail:    GmailConfig{Enabled: true},
-			Photos:   PhotosConfig{Enabled: true},
 			Sheets:   SheetsConfig{Enabled: true},
 			Docs:     DocsConfig{Enabled: true},
 		},
@@ -43,14 +42,6 @@ func TestConfigDefaults(t *testing.T) {
 		t.Errorf("Expected Drive MaxRetries to be 3, got %d", cfg.Services.Drive.MaxRetries)
 	}
 
-	// Test Photos defaults
-	if cfg.Services.Photos.UploadQuality != "original" {
-		t.Errorf("Expected Photos UploadQuality to be 'original', got %s", cfg.Services.Photos.UploadQuality)
-	}
-	if cfg.Services.Photos.MaxBatchSize != 50 {
-		t.Errorf("Expected Photos MaxBatchSize to be 50, got %d", cfg.Services.Photos.MaxBatchSize)
-	}
-
 	// Test Sheets defaults
 	if cfg.Services.Sheets.BatchSize != 1000 {
 		t.Errorf("Expected Sheets BatchSize to be 1000, got %d", cfg.Services.Sheets.BatchSize)
@@ -75,7 +66,6 @@ func TestConfigValidation(t *testing.T) {
 			Calendar: CalendarConfig{Enabled: false},
 			Drive:    DriveConfig{Enabled: false},
 			Gmail:    GmailConfig{Enabled: false},
-			Photos:   PhotosConfig{Enabled: false},
 			Sheets:   SheetsConfig{Enabled: false},
 			Docs:     DocsConfig{Enabled: false},
 		},

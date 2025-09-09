@@ -4,7 +4,7 @@ This document contains specific instructions for Claude Code when working with t
 
 ## Project Overview
 
-This is a Go-based MCP (Model Context Protocol) server that integrates with Google APIs including Calendar, Drive, Gmail, Photos, Sheets, and Docs. The server uses OAuth 2.0 for authentication and provides tools and resources accessible through MCP-compatible clients.
+This is a Go-based MCP (Model Context Protocol) server that integrates with Google APIs including Calendar, Drive, Gmail, Sheets, and Docs. The server uses OAuth 2.0 for authentication and provides tools and resources accessible through MCP-compatible clients.
 
 ## Development Guidelines
 
@@ -36,7 +36,6 @@ go build -o google-mcp-server .
 
 ### Stub Implementations (Need Extension)
 - **Gmail Service** (`gmail/`): Basic structure, needs full tool implementation
-- **Photos Service** (`photos/`): Basic structure, needs Photos Library API integration
 - **Sheets Service** (`sheets/`): Basic structure, needs additional operations
 - **Docs Service** (`docs/`): Basic structure, needs document manipulation tools
 
@@ -67,7 +66,6 @@ make test-coverage
 - **Calendar**: 1,000,000 queries/day
 - **Drive**: 1,000,000,000 queries/day  
 - **Gmail**: 250 quota units/user/second
-- **Photos**: 10,000 requests/day
 - **Sheets**: 100 requests/100 seconds
 - **Docs**: 60 requests/minute
 
@@ -84,7 +82,6 @@ Always implement exponential backoff for rate limit errors.
 
 ### High Priority
 - [ ] Complete Gmail service implementation (all tools from spec)
-- [ ] Implement Photos Library API properly (current stub uses simplified approach)
 - [ ] Add comprehensive unit tests for all services
 - [ ] Implement batch operations for better performance
 
@@ -128,7 +125,6 @@ Always implement exponential backoff for rate limit errors.
 │   └── resources.go # MCP resource implementations
 ├── drive/          # Google Drive service (same structure)
 ├── gmail/          # Gmail service (needs completion)
-├── photos/         # Photos service (needs proper API)
 ├── sheets/         # Sheets service (needs expansion)
 ├── docs/           # Docs service (needs expansion)
 ├── server/         # MCP server implementation

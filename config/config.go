@@ -21,7 +21,6 @@ type ServicesConfig struct {
 	Calendar CalendarConfig `json:"calendar"`
 	Drive    DriveConfig    `json:"drive"`
 	Gmail    GmailConfig    `json:"gmail"`
-	Photos   PhotosConfig   `json:"photos"`
 	Sheets   SheetsConfig   `json:"sheets"`
 	Docs     DocsConfig     `json:"docs"`
 }
@@ -49,14 +48,6 @@ type GmailConfig struct {
 	DefaultLabels []string `json:"default_labels,omitempty"`
 	Signature     string   `json:"signature,omitempty"`
 	MaxResults    int      `json:"max_results,omitempty"`
-}
-
-// PhotosConfig represents Photos service configuration
-type PhotosConfig struct {
-	Enabled       bool   `json:"enabled"`
-	UploadQuality string `json:"upload_quality,omitempty"`
-	AutoBackup    bool   `json:"auto_backup,omitempty"`
-	MaxBatchSize  int    `json:"max_batch_size,omitempty"`
 }
 
 // SheetsConfig represents Sheets service configuration
@@ -92,7 +83,6 @@ func Load() (*Config, error) {
 			Calendar: CalendarConfig{Enabled: true},
 			Drive:    DriveConfig{Enabled: true},
 			Gmail:    GmailConfig{Enabled: true},
-			Photos:   PhotosConfig{Enabled: true},
 			Sheets:   SheetsConfig{Enabled: true},
 			Docs:     DocsConfig{Enabled: true},
 		},
@@ -162,9 +152,6 @@ func (c *Config) loadFromEnv() error {
 	if os.Getenv("DISABLE_GMAIL") == "true" {
 		c.Services.Gmail.Enabled = false
 	}
-	if os.Getenv("DISABLE_PHOTOS") == "true" {
-		c.Services.Photos.Enabled = false
-	}
 	if os.Getenv("DISABLE_SHEETS") == "true" {
 		c.Services.Sheets.Enabled = false
 	}
@@ -203,7 +190,6 @@ func (c *Config) validate() error {
 	if !c.Services.Calendar.Enabled &&
 		!c.Services.Drive.Enabled &&
 		!c.Services.Gmail.Enabled &&
-		!c.Services.Photos.Enabled &&
 		!c.Services.Sheets.Enabled &&
 		!c.Services.Docs.Enabled {
 		return fmt.Errorf("at least one service must be enabled")
@@ -231,16 +217,6 @@ func (c *Config) setDefaults() {
 		}
 		if c.Services.Drive.MaxRetries == 0 {
 			c.Services.Drive.MaxRetries = 3
-		}
-	}
-
-	// Photos defaults
-	if c.Services.Photos.Enabled {
-		if c.Services.Photos.UploadQuality == "" {
-			c.Services.Photos.UploadQuality = "original"
-		}
-		if c.Services.Photos.MaxBatchSize == 0 {
-			c.Services.Photos.MaxBatchSize = 50
 		}
 	}
 
@@ -293,12 +269,6 @@ func SaveExample(path string) error {
 				SendLimit:     250,
 				DefaultLabels: []string{"INBOX"},
 				MaxResults:    100,
-			},
-			Photos: PhotosConfig{
-				Enabled:       true,
-				UploadQuality: "original",
-				AutoBackup:    false,
-				MaxBatchSize:  50,
 			},
 			Sheets: SheetsConfig{
 				Enabled:      true,

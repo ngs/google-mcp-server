@@ -1,10 +1,10 @@
 # Google MCP Server
 
-A Model Context Protocol (MCP) server that integrates with Google APIs (Calendar, Drive, Gmail, Photos, Sheets, Docs) to provide seamless access to Google services through MCP-compatible clients.
+A Model Context Protocol (MCP) server that integrates with Google APIs (Calendar, Drive, Gmail, Sheets, Docs) to provide seamless access to Google services through MCP-compatible clients.
 
 ## Features
 
-- **Multi-Service Support**: Integrated support for Google Calendar, Drive, Gmail, Photos, Sheets, and Docs
+- **Multi-Service Support**: Integrated support for Google Calendar, Drive, Gmail, Sheets, and Docs
 - **OAuth 2.0 Authentication**: Secure authentication with automatic token refresh
 - **MCP Protocol Compliant**: Fully compliant with the Model Context Protocol specification
 - **Cross-Platform**: Works on Windows, macOS, and Linux
@@ -79,7 +79,6 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
      - Google Calendar API
      - Google Drive API
      - Gmail API
-     - Photos Library API
      - Google Sheets API
      - Google Docs API
 
@@ -104,7 +103,6 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
        "calendar": {"enabled": true},
        "drive": {"enabled": true},
        "gmail": {"enabled": true},
-       "photos": {"enabled": true},
        "sheets": {"enabled": true},
        "docs": {"enabled": true}
      }
@@ -159,11 +157,6 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 - `gmail_messages_list` - List email messages
 - `gmail_messages_search` - Search emails
 - `gmail_message_get` - Get email details
-- (Additional tools in full implementation)
-
-### Google Photos
-- `photos_albums_list` - List photo albums
-- `photos_album_get` - Get album details
 - (Additional tools in full implementation)
 
 ### Google Sheets
@@ -376,7 +369,7 @@ See [WORKSPACE_SETUP.md](WORKSPACE_SETUP.md) for detailed instructions on config
    Quick checklist:
    - ✅ OAuth consent screen configured with all required fields
    - ✅ Your email added to "Test users" (if app is in testing mode)
-   - ✅ All 6 Google APIs enabled (Calendar, Drive, Gmail, Photos, Sheets, Docs)
+   - ✅ All 5 Google APIs enabled (Calendar, Drive, Gmail, Sheets, Docs)
    - ✅ OAuth client type is "Desktop app"
    - ✅ All required scopes added in OAuth consent screen
    - ✅ Wait 5-10 minutes after changes for propagation
@@ -437,7 +430,6 @@ Each Google API has its own rate limits:
 - **Calendar**: 1,000,000 queries/day
 - **Drive**: 1,000,000,000 queries/day
 - **Gmail**: 250 quota units/user/second
-- **Photos**: 10,000 requests/day
 - **Sheets**: 100 requests/100 seconds
 - **Docs**: 60 requests/minute
 
@@ -460,7 +452,6 @@ For issues, questions, or contributions, please visit the [GitHub repository](ht
 ## Roadmap
 
 - [ ] Full implementation of all Gmail tools
-- [ ] Complete Photos API integration
 - [ ] Advanced Sheets operations (charts, pivots)
 - [ ] Docs formatting and collaboration features
 - [ ] Batch operations optimization
