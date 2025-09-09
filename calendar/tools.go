@@ -42,11 +42,11 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"time_min": {
 						Type:        "string",
-						Description: "Start time (RFC3339 format)",
+						Description: "Start time in UTC (RFC3339 format, e.g., 2025-10-17T00:00:00Z)",
 					},
 					"time_max": {
 						Type:        "string",
-						Description: "End time (RFC3339 format)",
+						Description: "End time in UTC (RFC3339 format, e.g., 2025-10-18T00:00:00Z)",
 					},
 					"max_results": {
 						Type:        "number",
@@ -80,11 +80,11 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"start_time": {
 						Type:        "string",
-						Description: "Start time (RFC3339 format)",
+						Description: "Start time in UTC (RFC3339 format, e.g., 2025-10-17T10:30:00Z for 19:30 JST)",
 					},
 					"end_time": {
 						Type:        "string",
-						Description: "End time (RFC3339 format)",
+						Description: "End time in UTC (RFC3339 format, e.g., 2025-10-17T14:00:00Z for 23:00 JST)",
 					},
 					"attendees": {
 						Type:        "array",
@@ -132,11 +132,11 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"start_time": {
 						Type:        "string",
-						Description: "Start time (RFC3339 format)",
+						Description: "Start time in UTC (RFC3339 format, e.g., 2025-10-17T10:30:00Z for 19:30 JST)",
 					},
 					"end_time": {
 						Type:        "string",
-						Description: "End time (RFC3339 format)",
+						Description: "End time in UTC (RFC3339 format, e.g., 2025-10-17T14:00:00Z for 23:00 JST)",
 					},
 				},
 				Required: []string{"calendar_id", "event_id"},
@@ -193,11 +193,11 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"time_min": {
 						Type:        "string",
-						Description: "Start time (RFC3339 format)",
+						Description: "Start time in UTC (RFC3339 format, e.g., 2025-10-17T00:00:00Z)",
 					},
 					"time_max": {
 						Type:        "string",
-						Description: "End time (RFC3339 format)",
+						Description: "End time in UTC (RFC3339 format, e.g., 2025-10-18T00:00:00Z)",
 					},
 				},
 				Required: []string{"calendar_ids", "time_min", "time_max"},
@@ -219,11 +219,11 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"time_min": {
 						Type:        "string",
-						Description: "Start time (RFC3339 format)",
+						Description: "Start time in UTC (RFC3339 format, e.g., 2025-10-17T00:00:00Z)",
 					},
 					"time_max": {
 						Type:        "string",
-						Description: "End time (RFC3339 format)",
+						Description: "End time in UTC (RFC3339 format, e.g., 2025-10-18T00:00:00Z)",
 					},
 				},
 				Required: []string{"calendar_id", "query"},
