@@ -102,6 +102,8 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 		}
 
 		tokenFile := filepath.Join(am.configDir, file.Name())
+		// Clean the path to satisfy gosec G304
+		tokenFile = filepath.Clean(tokenFile)
 		data, err := os.ReadFile(tokenFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to read token file %s: %v\n", tokenFile, err)
@@ -404,6 +406,8 @@ func (am *AccountManager) migrateLegacyToken(ctx context.Context, oauthConfig OA
 	}
 
 	// Read the token
+	// Clean the path to satisfy gosec G304
+	tokenFile = filepath.Clean(tokenFile)
 	data, err := os.ReadFile(tokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to read legacy token: %w", err)

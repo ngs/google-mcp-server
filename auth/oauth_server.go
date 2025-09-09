@@ -32,11 +32,11 @@ func NewOAuthCallbackServer(config *oauth2.Config) *OAuthCallbackServer {
 
 // StartAndWaitForCallback starts the server and waits for OAuth callback
 func (s *OAuthCallbackServer) StartAndWaitForCallback(ctx context.Context) (*oauth2.Token, error) {
-	// Find available port
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", s.port))
+	// Find available port - bind to localhost only for security
+	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", s.port))
 	if err != nil {
-		// Try random port
-		listener, err = net.Listen("tcp", ":0")
+		// Try random port on localhost
+		listener, err = net.Listen("tcp", "localhost:0")
 		if err != nil {
 			return nil, fmt.Errorf("failed to start callback server: %w", err)
 		}
@@ -52,7 +52,8 @@ func (s *OAuthCallbackServer) StartAndWaitForCallback(ctx context.Context) (*oau
 	mux.HandleFunc("/", s.handleRoot)
 
 	s.server = &http.Server{
-		Handler: mux,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	// Start server in background

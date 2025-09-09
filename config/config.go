@@ -252,6 +252,8 @@ func (c *Config) setDefaults() {
 
 // SaveExample saves an example configuration file
 func SaveExample(path string) error {
+	// Clean the path to prevent directory traversal
+	path = filepath.Clean(path)
 	example := &Config{
 		OAuth: auth.OAuthConfig{
 			ClientID:     "YOUR_CLIENT_ID.apps.googleusercontent.com",
