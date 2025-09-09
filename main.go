@@ -103,21 +103,24 @@ func registerServices(ctx context.Context, srv *server.MCPServer, accountManager
 		time.Sleep(serviceDelay)
 	}
 
-	// Initialize and register Drive service
+	// Initialize and register Drive service with multi-account support
 	if cfg.Services.Drive.Enabled {
 		log.Println("[DEBUG] Initializing Drive service...")
-		// Add timeout context for initialization
-		initCtx, cancel := context.WithTimeout(ctx, initTimeout)
-		driveClient, err := drive.NewClient(initCtx, oauth)
-		cancel()
-		if err != nil {
-			log.Printf("[ERROR] Failed to initialize Drive client: %v\n", err)
-			// Continue without Drive service instead of failing
-		} else {
-			driveHandler := drive.NewHandler(driveClient)
-			srv.RegisterService("drive", driveHandler)
-			log.Println("[DEBUG] Drive service registered")
+		var driveClient *drive.Client
+		if oauth != nil {
+			initCtx, cancel := context.WithTimeout(ctx, initTimeout)
+			var err error
+			driveClient, err = drive.NewClient(initCtx, oauth)
+			cancel()
+			if err != nil {
+				log.Printf("[WARNING] Failed to initialize default Drive client: %v\n", err)
+				driveClient = nil
+			}
 		}
+		// Use multi-account handler
+		driveHandler := drive.NewMultiAccountHandler(accountManager, driveClient)
+		srv.RegisterService("drive", driveHandler)
+		log.Println("[DEBUG] Drive service registered with multi-account support")
 		// Add delay before next service
 		time.Sleep(serviceDelay)
 	}

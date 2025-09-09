@@ -2,23 +2,25 @@ package drive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 
 	"go.ngs.io/google-mcp-server/auth"
+	"go.ngs.io/google-mcp-server/server"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 )
 
-// MultiAccountClient manages drive operations across multiple accounts
+// MultiAccountClient manages Drive operations across multiple accounts
 type MultiAccountClient struct {
 	accountManager *auth.AccountManager
 	clients        map[string]*Client
 	mu             sync.RWMutex
 }
 
-// NewMultiAccountClient creates a new multi-account drive client
+// NewMultiAccountClient creates a new multi-account Drive client
 func NewMultiAccountClient(ctx context.Context, accountManager *auth.AccountManager) (*MultiAccountClient, error) {
 	mac := &MultiAccountClient{
 		accountManager: accountManager,
@@ -92,7 +94,7 @@ func (mac *MultiAccountClient) GetClientForContext(ctx context.Context, hint str
 }
 
 // SearchAcrossAccounts searches for files across all accounts
-func (mac *MultiAccountClient) SearchAcrossAccounts(ctx context.Context, query string) (map[string][]*drive.File, error) {
+func (mac *MultiAccountClient) SearchAcrossAccounts(ctx context.Context, query string, pageSize int64) (map[string][]*drive.File, error) {
 	results := make(map[string][]*drive.File)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -110,7 +112,9 @@ func (mac *MultiAccountClient) SearchAcrossAccounts(ctx context.Context, query s
 		go func(email string, client *Client) {
 			defer wg.Done()
 
-			fileList, err := client.service.Files.List().Q(query).Do()
+			// SearchFiles expects (name, mimeType, modifiedAfter)
+			// For cross-account search, we'll use ListFiles with the query directly
+			files, err := client.ListFiles(query, pageSize, "")
 			if err != nil {
 				mu.Lock()
 				errors = append(errors, fmt.Errorf("%s: %w", email, err))
@@ -119,7 +123,7 @@ func (mac *MultiAccountClient) SearchAcrossAccounts(ctx context.Context, query s
 			}
 
 			mu.Lock()
-			results[email] = fileList.Files
+			results[email] = files
 			mu.Unlock()
 		}(email, client)
 	}
@@ -153,15 +157,7 @@ func (mac *MultiAccountClient) ListFilesAcrossAccounts(ctx context.Context, pare
 		go func(email string, client *Client) {
 			defer wg.Done()
 
-			call := client.service.Files.List()
-			if parentID != "" {
-				call = call.Q(fmt.Sprintf("'%s' in parents", parentID))
-			}
-			if pageSize > 0 {
-				call = call.PageSize(pageSize)
-			}
-
-			fileList, err := call.Do()
+			files, err := client.ListFiles("", pageSize, parentID)
 			if err != nil {
 				mu.Lock()
 				errors = append(errors, fmt.Errorf("%s: %w", email, err))
@@ -170,7 +166,7 @@ func (mac *MultiAccountClient) ListFilesAcrossAccounts(ctx context.Context, pare
 			}
 
 			mu.Lock()
-			results[email] = fileList.Files
+			results[email] = files
 			mu.Unlock()
 		}(email, client)
 	}
@@ -185,17 +181,196 @@ func (mac *MultiAccountClient) ListFilesAcrossAccounts(ctx context.Context, pare
 	return results, nil
 }
 
-// UploadFileWithAccount uploads a file with a specific account
-func (mac *MultiAccountClient) UploadFileWithAccount(ctx context.Context, email string, file *drive.File, content []byte) (*drive.File, error) {
-	mac.mu.RLock()
-	_, exists := mac.clients[email]
-	mac.mu.RUnlock()
+// MultiAccountHandler handles Drive operations with multi-account support
+type MultiAccountHandler struct {
+	multiClient *MultiAccountClient
+	handler     *Handler // Original handler for backward compatibility
+}
 
-	if !exists {
-		return nil, fmt.Errorf("no client for account %s", email)
+// NewMultiAccountHandler creates a new handler with multi-account support
+func NewMultiAccountHandler(accountManager *auth.AccountManager, defaultClient *Client) *MultiAccountHandler {
+	ctx := context.Background()
+	multiClient, err := NewMultiAccountClient(ctx, accountManager)
+	if err != nil {
+		// Log error but continue with limited functionality
+		fmt.Printf("Warning: failed to initialize multi-account client: %v\n", err)
+		multiClient = &MultiAccountClient{
+			accountManager: accountManager,
+			clients:        make(map[string]*Client),
+		}
 	}
 
-	// Implementation would use client.service.Files.Create(...).Media(bytes.NewReader(content)).Do()
-	// Simplified for now - full implementation will be added when needed
-	return nil, fmt.Errorf("upload implementation needed")
+	// Create original handler for backward compatibility
+	var handler *Handler
+	if defaultClient != nil {
+		handler = NewHandler(defaultClient)
+	}
+
+	return &MultiAccountHandler{
+		multiClient: multiClient,
+		handler:     handler,
+	}
+}
+
+// GetTools returns the available Drive tools with multi-account support
+func (h *MultiAccountHandler) GetTools() []server.Tool {
+	// Get original tools from handler
+	if h.handler != nil {
+		tools := h.handler.GetTools()
+
+		// Add account parameter to existing tools
+		for i := range tools {
+			if tools[i].InputSchema.Properties == nil {
+				tools[i].InputSchema.Properties = make(map[string]server.Property)
+			}
+			tools[i].InputSchema.Properties["account"] = server.Property{
+				Type:        "string",
+				Description: "Email address of the account to use (optional)",
+			}
+		}
+
+		// Add new multi-account specific tools
+		tools = append(tools, server.Tool{
+			Name:        "drive_files_list_all_accounts",
+			Description: "List files from all authenticated accounts",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"parent_id": {
+						Type:        "string",
+						Description: "Parent folder ID (optional, defaults to root)",
+					},
+					"page_size": {
+						Type:        "number",
+						Description: "Number of files per account (max 1000)",
+					},
+				},
+			},
+		})
+
+		return tools
+	}
+
+	// Return empty if no handler
+	return []server.Tool{}
+}
+
+// HandleToolCall handles a tool call for Drive service with multi-account support
+func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, arguments json.RawMessage) (interface{}, error) {
+	// Handle multi-account specific tools
+	if name == "drive_files_list_all_accounts" {
+		var args struct {
+			ParentID string  `json:"parent_id"`
+			PageSize float64 `json:"page_size"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		pageSize := int64(args.PageSize)
+		if pageSize <= 0 {
+			pageSize = 100
+		}
+
+		// List files across all accounts
+		results, err := h.multiClient.ListFilesAcrossAccounts(ctx, args.ParentID, pageSize)
+		if err != nil {
+			return nil, err
+		}
+
+		// Format results
+		formattedResults := make(map[string]interface{})
+		totalFiles := 0
+		for email, files := range results {
+			fileList := make([]map[string]interface{}, len(files))
+			for i, file := range files {
+				fileInfo := map[string]interface{}{
+					"id":           file.Id,
+					"name":         file.Name,
+					"mimeType":     file.MimeType,
+					"size":         file.Size,
+					"modifiedTime": file.ModifiedTime,
+				}
+				if file.WebViewLink != "" {
+					fileInfo["webViewLink"] = file.WebViewLink
+				}
+				if len(file.Parents) > 0 {
+					fileInfo["parents"] = file.Parents
+				}
+				if file.ThumbnailLink != "" {
+					fileInfo["thumbnailLink"] = file.ThumbnailLink
+				}
+				if file.IconLink != "" {
+					fileInfo["iconLink"] = file.IconLink
+				}
+				fileList[i] = fileInfo
+			}
+			formattedResults[email] = map[string]interface{}{
+				"files": fileList,
+				"count": len(files),
+			}
+			totalFiles += len(files)
+		}
+
+		return map[string]interface{}{
+			"accounts":      formattedResults,
+			"total_count":   totalFiles,
+			"account_count": len(results),
+		}, nil
+	}
+
+	// For other tools, check if account parameter is provided
+	var accountHint string
+	if arguments != nil {
+		var args map[string]interface{}
+		if err := json.Unmarshal(arguments, &args); err == nil {
+			if account, ok := args["account"].(string); ok {
+				accountHint = account
+			}
+		}
+	}
+
+	// Try to get client for the specified account
+	if accountHint != "" || h.multiClient != nil {
+		client, accountUsed, err := h.multiClient.GetClientForContext(ctx, accountHint)
+		if err == nil {
+			// Create a temporary handler with the selected client
+			tempHandler := NewHandler(client)
+			result, err := tempHandler.HandleToolCall(ctx, name, arguments)
+			if err != nil {
+				return nil, err
+			}
+
+			// Add account information to result if it's a map
+			if resultMap, ok := result.(map[string]interface{}); ok {
+				resultMap["account"] = accountUsed
+			}
+
+			return result, nil
+		}
+	}
+
+	// Fall back to original handler for backward compatibility
+	if h.handler != nil {
+		return h.handler.HandleToolCall(ctx, name, arguments)
+	}
+
+	return nil, fmt.Errorf("no handler available for tool: %s", name)
+}
+
+// GetResources returns the available Drive resources
+func (h *MultiAccountHandler) GetResources() []server.Resource {
+	if h.handler != nil {
+		return h.handler.GetResources()
+	}
+	return []server.Resource{}
+}
+
+// HandleResourceCall handles a resource call for Drive service
+func (h *MultiAccountHandler) HandleResourceCall(ctx context.Context, uri string) (interface{}, error) {
+	// For now, delegate to original handler
+	if h.handler != nil {
+		return h.handler.HandleResourceCall(ctx, uri)
+	}
+	return nil, fmt.Errorf("no handler available for resource: %s", uri)
 }
