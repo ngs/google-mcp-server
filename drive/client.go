@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -341,7 +342,9 @@ func (c *Client) ExportFile(fileID, mimeType string) (io.ReadCloser, error) {
 
 // UploadFileFromPath uploads a file from filesystem path
 func (c *Client) UploadFileFromPath(filePath string, parentID string) (*drive.File, error) {
-	file, err := os.Open(filePath)
+	// Clean the path to prevent directory traversal
+	cleanPath := filepath.Clean(filePath)
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %w", err)
 	}

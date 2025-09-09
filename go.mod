@@ -1,22 +1,23 @@
 module go.ngs.io/google-mcp-server
 
-go 1.23.0
+go 1.24.0
+
+toolchain go1.24.6
 
 require (
+	github.com/alecthomas/chroma/v2 v2.2.0
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c
 	github.com/sourcegraph/jsonrpc2 v0.2.0
 	github.com/yuin/goldmark v1.7.13
 	github.com/yuin/goldmark-emoji v1.0.6
 	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20230729083705-37449abec8cc
 	github.com/yuin/goldmark-meta v1.1.0
-	golang.org/x/oauth2 v0.15.0
+	golang.org/x/oauth2 v0.31.0
 	google.golang.org/api v0.154.0
 )
 
 require (
-	cloud.google.com/go/compute v1.23.3 // indirect
-	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	github.com/alecthomas/chroma/v2 v2.2.0 // indirect
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/dlclark/regexp2 v1.7.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.3.0 // indirect
@@ -34,12 +35,10 @@ require (
 	go.opentelemetry.io/otel v1.21.0 // indirect
 	go.opentelemetry.io/otel/metric v1.21.0 // indirect
 	go.opentelemetry.io/otel/trace v1.21.0 // indirect
-	golang.org/x/crypto v0.16.0 // indirect
-	golang.org/x/net v0.19.0 // indirect
-	golang.org/x/sync v0.12.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.22.0 // indirect
-	google.golang.org/appengine v1.6.7 // indirect
+	golang.org/x/crypto v0.42.0 // indirect
+	golang.org/x/net v0.44.0 // indirect
+	golang.org/x/sys v0.36.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231127180814-3a041ad873d4 // indirect
 	google.golang.org/grpc v1.59.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect

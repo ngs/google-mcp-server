@@ -176,7 +176,9 @@ func (c *Config) loadFromEnv() error {
 
 // loadFromFile loads configuration from a JSON file
 func (c *Config) loadFromFile(path string) error {
-	file, err := os.Open(path)
+	// Clean the path to prevent directory traversal
+	cleanPath := filepath.Clean(path)
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return err
 	}
