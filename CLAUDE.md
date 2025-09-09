@@ -170,3 +170,11 @@ if err != nil {
 ```
 
 This ensures proper error wrapping and context throughout the call stack.
+
+## Google Docs Creation Guidelines
+
+When creating or uploading documents to Google Docs:
+- **For Markdown content**: Always use `mcp__google__drive_markdown_upload` tool instead of `mcp__google__docs_document_create` followed by `mcp__google__docs_document_update`
+- **For updating existing Google Docs with Markdown**: Use `mcp__google__drive_markdown_replace` tool
+- The `drive_markdown_upload` tool properly converts Markdown to Google Docs format with correct formatting
+- The `docs_document_create` and `docs_document_update` tools should only be used for plain text content without Markdown formatting

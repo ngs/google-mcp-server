@@ -37,7 +37,7 @@ func (h *Handler) GetTools() []server.Tool {
 		},
 		{
 			Name:        "docs_document_create",
-			Description: "Create a new document",
+			Description: "Create a new plain text document (for Markdown use drive_markdown_upload instead)",
 			InputSchema: server.InputSchema{
 				Type: "object",
 				Properties: map[string]server.Property{
@@ -51,7 +51,7 @@ func (h *Handler) GetTools() []server.Tool {
 		},
 		{
 			Name:        "docs_document_update",
-			Description: "Update document content (append text or replace all content)",
+			Description: "Update plain text document content - append or replace (for Markdown use drive_markdown_replace)",
 			InputSchema: server.InputSchema{
 				Type: "object",
 				Properties: map[string]server.Property{

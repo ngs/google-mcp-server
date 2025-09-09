@@ -104,7 +104,7 @@ func (h *Handler) GetTools() []server.Tool {
 		},
 		{
 			Name:        "drive_markdown_upload",
-			Description: "Upload a Markdown file as a Google Doc",
+			Description: "Upload Markdown content as a properly formatted Google Doc (RECOMMENDED for any Markdown/formatted text)",
 			InputSchema: server.InputSchema{
 				Type: "object",
 				Properties: map[string]server.Property{
@@ -114,7 +114,7 @@ func (h *Handler) GetTools() []server.Tool {
 					},
 					"markdown": {
 						Type:        "string",
-						Description: "Markdown content to convert and upload",
+						Description: "Markdown content to convert and upload (supports headers, lists, code blocks, etc.)",
 					},
 					"parent_id": {
 						Type:        "string",
@@ -126,7 +126,7 @@ func (h *Handler) GetTools() []server.Tool {
 		},
 		{
 			Name:        "drive_markdown_replace",
-			Description: "Replace Google Doc content with converted Markdown",
+			Description: "Replace existing Google Doc content with properly formatted Markdown (preserves formatting)",
 			InputSchema: server.InputSchema{
 				Type: "object",
 				Properties: map[string]server.Property{
