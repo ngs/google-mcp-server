@@ -18,11 +18,17 @@ type Config struct {
 
 // ServicesConfig represents configuration for all services
 type ServicesConfig struct {
+	Accounts AccountsConfig `json:"accounts"`
 	Calendar CalendarConfig `json:"calendar"`
 	Drive    DriveConfig    `json:"drive"`
 	Gmail    GmailConfig    `json:"gmail"`
 	Sheets   SheetsConfig   `json:"sheets"`
 	Docs     DocsConfig     `json:"docs"`
+}
+
+// AccountsConfig represents Accounts service configuration
+type AccountsConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // CalendarConfig represents Calendar service configuration
@@ -80,6 +86,7 @@ func Load() (*Config, error) {
 	// Starting configuration load
 	cfg := &Config{
 		Services: ServicesConfig{
+			Accounts: AccountsConfig{Enabled: true},
 			Calendar: CalendarConfig{Enabled: true},
 			Drive:    DriveConfig{Enabled: true},
 			Gmail:    GmailConfig{Enabled: true},

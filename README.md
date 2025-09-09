@@ -4,6 +4,7 @@ A Model Context Protocol (MCP) server that integrates with Google APIs (Calendar
 
 ## Features
 
+- **Multiple Account Support**: Manage multiple Google accounts with automatic context-aware selection
 - **Multi-Service Support**: Integrated support for Google Calendar, Drive, Gmail, Sheets, and Docs
 - **OAuth 2.0 Authentication**: Secure authentication with automatic token refresh
 - **MCP Protocol Compliant**: Fully compliant with the Model Context Protocol specification
@@ -125,6 +126,13 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 
 ## Available Tools
 
+### Account Management
+- `accounts_list` - List all authenticated Google accounts
+- `accounts_details` - Get detailed information about accounts
+- `accounts_add` - Add a new Google account
+- `accounts_remove` - Remove an authenticated account
+- `accounts_refresh` - Refresh authentication token for an account
+
 ### Google Calendar
 - `calendar_list` - List all accessible calendars
 - `calendar_events_list` - List events with date range filtering
@@ -171,6 +179,28 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 - (Additional tools in full implementation)
 
 ## Usage Examples
+
+### Multi-Account Support
+
+The server supports managing multiple Google accounts simultaneously with automatic context-aware selection:
+
+1. **List authenticated accounts**:
+   - Use `accounts_list` to see all authenticated accounts
+   - Shows email, name, last used time, and authentication status
+
+2. **Add additional accounts**:
+   - Use `accounts_add` to get an authorization URL
+   - Complete the OAuth flow in your browser
+   - The new account will be automatically added
+
+3. **Automatic account selection**:
+   - When you reference a specific email or domain, the server automatically selects the correct account
+   - Example: "Create an event in john@example.com's calendar" will use John's account
+   - For ambiguous requests, the server will ask which account to use
+
+4. **Cross-account operations**:
+   - Search operations can span across all authenticated accounts
+   - Results are organized by account for clarity
 
 ### With Claude Desktop
 
