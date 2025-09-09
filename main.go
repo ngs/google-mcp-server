@@ -13,7 +13,6 @@ import (
 	"go.ngs.io/google-mcp-server/docs"
 	"go.ngs.io/google-mcp-server/drive"
 	"go.ngs.io/google-mcp-server/gmail"
-	"go.ngs.io/google-mcp-server/photos"
 	"go.ngs.io/google-mcp-server/server"
 	"go.ngs.io/google-mcp-server/sheets"
 )
@@ -117,23 +116,6 @@ func registerServices(ctx context.Context, srv *server.MCPServer, oauth *auth.OA
 			gmailHandler := gmail.NewHandler(gmailClient)
 			srv.RegisterService("gmail", gmailHandler)
 			// Gmail service registered
-		}
-		// Add delay before next service
-		time.Sleep(serviceDelay)
-	}
-
-	// Initialize and register Photos service
-	if cfg.Services.Photos.Enabled {
-		// Initialize Photos service
-		initCtx, cancel := context.WithTimeout(ctx, initTimeout)
-		photosClient, err := photos.NewClient(initCtx, oauth)
-		cancel()
-		if err != nil {
-			// Failed to initialize Photos client, continue without it
-		} else {
-			photosHandler := photos.NewHandler(photosClient)
-			srv.RegisterService("photos", photosHandler)
-			// Photos service registered
 		}
 		// Add delay before next service
 		time.Sleep(serviceDelay)

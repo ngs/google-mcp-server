@@ -18,7 +18,6 @@ func TestDefaultScopes(t *testing.T) {
 		"https://www.googleapis.com/auth/calendar",
 		"https://www.googleapis.com/auth/drive",
 		"https://www.googleapis.com/auth/gmail.modify",
-		"https://www.googleapis.com/auth/photoslibrary",
 		"https://www.googleapis.com/auth/spreadsheets",
 		"https://www.googleapis.com/auth/documents",
 		"https://www.googleapis.com/auth/userinfo.email",
