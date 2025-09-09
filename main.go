@@ -122,19 +122,24 @@ func registerServices(ctx context.Context, srv *server.MCPServer, accountManager
 		time.Sleep(serviceDelay)
 	}
 
-	// Initialize and register Gmail service
+	// Initialize and register Gmail service with multi-account support
 	if cfg.Services.Gmail.Enabled {
-		// Initialize Gmail service
-		initCtx, cancel := context.WithTimeout(ctx, initTimeout)
-		gmailClient, err := gmail.NewClient(initCtx, oauth)
-		cancel()
-		if err != nil {
-			// Failed to initialize Gmail client, continue without it
-		} else {
-			gmailHandler := gmail.NewHandler(gmailClient)
-			srv.RegisterService("gmail", gmailHandler)
-			// Gmail service registered
+		log.Println("[DEBUG] Initializing Gmail service...")
+		var gmailClient *gmail.Client
+		if oauth != nil {
+			initCtx, cancel := context.WithTimeout(ctx, initTimeout)
+			var err error
+			gmailClient, err = gmail.NewClient(initCtx, oauth)
+			cancel()
+			if err != nil {
+				log.Printf("[WARNING] Failed to initialize default Gmail client: %v\n", err)
+				gmailClient = nil
+			}
 		}
+		// Use multi-account handler
+		gmailHandler := gmail.NewMultiAccountHandler(accountManager, gmailClient)
+		srv.RegisterService("gmail", gmailHandler)
+		log.Println("[DEBUG] Gmail service registered with multi-account support")
 		// Add delay before next service
 		time.Sleep(serviceDelay)
 	}
