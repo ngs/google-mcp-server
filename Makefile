@@ -1,4 +1,4 @@
-.PHONY: build test clean install run lint fmt
+.PHONY: build test clean install run lint fmt install-tools
 
 # Variables
 BINARY_NAME=google-mcp-server
@@ -41,6 +41,17 @@ fmt:
 	$(GO) fmt ./...
 	goimports -w .
 
+# Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	@$(GO) install golang.org/x/tools/cmd/goimports@latest
+	@$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@$(GO) install github.com/goreleaser/goreleaser@latest
+	@$(GO) install golang.org/x/vuln/cmd/govulncheck@latest
+	@$(GO) install github.com/securego/gosec/v2/cmd/gosec@latest
+	@$(GO) install honnef.co/go/tools/cmd/staticcheck@latest
+	@echo "Development tools installed successfully!"
+
 # Download dependencies
 deps:
 	$(GO) mod download
@@ -75,6 +86,7 @@ help:
 	@echo "  run           - Run the application"
 	@echo "  lint          - Run linter"
 	@echo "  fmt           - Format code"
+	@echo "  install-tools - Install development tools"
 	@echo "  deps          - Download dependencies"
 	@echo "  update-deps   - Update dependencies"
 	@echo "  build-all     - Build for all platforms"
