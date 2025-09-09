@@ -362,14 +362,14 @@ func (h *Handler) handleEventsList(ctx context.Context, calendarID, timeMinStr, 
 	var err error
 
 	if timeMinStr != "" {
-		timeMin, err = time.Parse(time.RFC3339, timeMinStr)
+		timeMin, err = parseTimeString(timeMinStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_min format: %w", err)
 		}
 	}
 
 	if timeMaxStr != "" {
-		timeMax, err = time.Parse(time.RFC3339, timeMaxStr)
+		timeMax, err = parseTimeString(timeMaxStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_max format: %w", err)
 		}
@@ -394,12 +394,12 @@ func (h *Handler) handleEventsList(ctx context.Context, calendarID, timeMinStr, 
 func (h *Handler) handleEventCreate(ctx context.Context, calendarID, summary, description, location,
 	startTimeStr, endTimeStr string, attendees []string, reminders []int) (interface{}, error) {
 
-	startTime, err := time.Parse(time.RFC3339, startTimeStr)
+	startTime, err := parseTimeString(startTimeStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid start_time format: %w", err)
 	}
 
-	endTime, err := time.Parse(time.RFC3339, endTimeStr)
+	endTime, err := parseTimeString(endTimeStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid end_time format: %w", err)
 	}
@@ -433,18 +433,20 @@ func (h *Handler) handleEventUpdate(ctx context.Context, calendarID, eventID, su
 		event.Location = location
 	}
 	if startTimeStr != "" {
-		startTime, err := time.Parse(time.RFC3339, startTimeStr)
+		startTime, err := parseTimeString(startTimeStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid start_time format: %w", err)
 		}
 		event.Start.DateTime = startTime.Format(time.RFC3339)
+		event.Start.TimeZone = startTime.Location().String()
 	}
 	if endTimeStr != "" {
-		endTime, err := time.Parse(time.RFC3339, endTimeStr)
+		endTime, err := parseTimeString(endTimeStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid end_time format: %w", err)
 		}
 		event.End.DateTime = endTime.Format(time.RFC3339)
+		event.End.TimeZone = endTime.Location().String()
 	}
 
 	updated, err := h.client.UpdateEvent(calendarID, eventID, event)
@@ -471,12 +473,12 @@ func (h *Handler) handleEventGet(ctx context.Context, calendarID, eventID string
 }
 
 func (h *Handler) handleFreeBusyQuery(ctx context.Context, calendarIDs []string, timeMinStr, timeMaxStr string) (interface{}, error) {
-	timeMin, err := time.Parse(time.RFC3339, timeMinStr)
+	timeMin, err := parseTimeString(timeMinStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid time_min format: %w", err)
 	}
 
-	timeMax, err := time.Parse(time.RFC3339, timeMaxStr)
+	timeMax, err := parseTimeString(timeMaxStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid time_max format: %w", err)
 	}
@@ -519,14 +521,14 @@ func (h *Handler) handleEventSearch(ctx context.Context, calendarID, query, time
 	var err error
 
 	if timeMinStr != "" {
-		timeMin, err = time.Parse(time.RFC3339, timeMinStr)
+		timeMin, err = parseTimeString(timeMinStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_min format: %w", err)
 		}
 	}
 
 	if timeMaxStr != "" {
-		timeMax, err = time.Parse(time.RFC3339, timeMaxStr)
+		timeMax, err = parseTimeString(timeMaxStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid time_max format: %w", err)
 		}
@@ -546,6 +548,31 @@ func (h *Handler) handleEventSearch(ctx context.Context, calendarID, query, time
 	return map[string]interface{}{
 		"events": eventList,
 	}, nil
+}
+
+// parseTimeString parses a time string, accepting multiple formats
+// If no timezone is specified, it uses the system's local timezone
+func parseTimeString(timeStr string) (time.Time, error) {
+	// Try RFC3339 format first (with timezone)
+	if t, err := time.Parse(time.RFC3339, timeStr); err == nil {
+		return t, nil
+	}
+
+	// Try common datetime formats without timezone (will use local timezone)
+	formats := []string{
+		"2006-01-02T15:04:05", // ISO 8601 without timezone
+		"2006-01-02 15:04:05", // Common datetime format
+		"2006-01-02T15:04",    // ISO 8601 without seconds and timezone
+		"2006-01-02 15:04",    // Common format without seconds
+	}
+
+	for _, format := range formats {
+		if t, err := time.ParseInLocation(format, timeStr, time.Local); err == nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("unable to parse time string: %s", timeStr)
 }
 
 // formatEvent formats a calendar event for response
