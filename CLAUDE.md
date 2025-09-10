@@ -30,23 +30,25 @@ go build -o google-mcp-server .
 
 ## Service Implementation Status
 
-### Fully Implemented
-- **Calendar Service** (`calendar/`): All 8 tools implemented with full functionality
-- **Drive Service** (`drive/`): All 16 tools implemented with full functionality
+### Fully Implemented with Multi-Account Support
+- **Calendar Service** (`calendar/`): All 8 tools + multi-account support via `calendar/multi_account.go`
+- **Drive Service** (`drive/`): All 19 tools including Markdown support + multi-account support via `drive/multi_account.go`
+- **Gmail Service** (`gmail/`): 3 core tools + multi-account support via `gmail/multi_account.go`
+- **Account Management** (`accounts/`): 5 tools for managing multiple Google accounts
 
-### Stub Implementations (Need Extension)
-- **Gmail Service** (`gmail/`): Basic structure, needs full tool implementation
-- **Sheets Service** (`sheets/`): Basic structure, needs additional operations
-- **Docs Service** (`docs/`): Basic structure, needs document manipulation tools
+### Basic Implementation
+- **Sheets Service** (`sheets/`): 3 basic tools (get/update values, get spreadsheet)
+- **Docs Service** (`docs/`): 3 basic tools (get/create/update documents)
 
 ## Common Tasks
 
 ### Adding a New Tool to a Service
 
-1. Add the tool definition in `<service>/tools.go` in the `GetTools()` method
-2. Implement the handler in `HandleToolCall()` method
+1. Add the tool definition in `<service>/tools.go` or `<service>/multi_account.go` in the `GetTools()` method
+2. Implement the handler in `HandleToolCall()` method (consider multi-account support)
 3. Add the corresponding client method in `<service>/client.go`
-4. Update documentation in README.md
+4. For multi-account tools, update the `MultiAccountHandler` in `<service>/multi_account.go`
+5. Update documentation in README.md
 
 ### Updating Dependencies
 ```bash
@@ -81,7 +83,8 @@ Always implement exponential backoff for rate limit errors.
 ## Known Issues and TODOs
 
 ### High Priority
-- [ ] Complete Gmail service implementation (all tools from spec)
+- [x] Multi-account support for Calendar, Drive, and Gmail
+- [ ] Complete remaining Gmail tools (send, reply, labels, etc.)
 - [ ] Add comprehensive unit tests for all services
 - [ ] Implement batch operations for better performance
 
@@ -100,9 +103,12 @@ Always implement exponential backoff for rate limit errors.
 ## Debugging Tips
 
 ### OAuth Issues
-- Check if token file exists: `~/.google-mcp-token.json`
+- Check if token files exist: `~/.google-mcp-accounts/*.json`
+- For single account legacy mode: `~/.google-mcp-token.json` (auto-migrated to multi-account)
 - Verify all required APIs are enabled in Google Cloud Console
 - Ensure redirect URI matches exactly: `http://localhost:8080/callback`
+- Use `accounts_list` to see authenticated accounts
+- Use `accounts_add` to add new accounts
 
 ### MCP Connection Issues
 - Use `--debug` flag (when implemented) for verbose logging
@@ -118,13 +124,14 @@ Always implement exponential backoff for rate limit errors.
 
 ```
 .
-├── auth/           # OAuth authentication logic
+├── auth/           # OAuth authentication logic and multi-account management
+├── accounts/       # Account management tools and handlers
 ├── calendar/       # Google Calendar service
 │   ├── client.go   # API client wrapper
 │   ├── tools.go    # MCP tool implementations
 │   └── resources.go # MCP resource implementations
 ├── drive/          # Google Drive service (same structure)
-├── gmail/          # Gmail service (needs completion)
+├── gmail/          # Gmail service with multi-account support
 ├── sheets/         # Sheets service (needs expansion)
 ├── docs/           # Docs service (needs expansion)
 ├── server/         # MCP server implementation

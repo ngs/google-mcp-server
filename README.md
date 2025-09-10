@@ -135,8 +135,9 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 
 ### Google Calendar
 - `calendar_list` - List all accessible calendars
-- `calendar_events_list` - List events with date range filtering
-- `calendar_event_create` - Create new events
+- `calendar_events_list` - List events with date range filtering (supports `account` parameter)
+- `calendar_events_list_all_accounts` - List events from all authenticated accounts
+- `calendar_event_create` - Create new events (supports `account` parameter)
 - `calendar_event_update` - Update existing events
 - `calendar_event_delete` - Delete events
 - `calendar_event_get` - Get event details
@@ -144,28 +145,30 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 - `calendar_event_search` - Search for events
 
 ### Google Drive
-- `drive_files_list` - List files and folders
-- `drive_files_search` - Search for files
-- `drive_file_download` - Download files
-- `drive_file_upload` - Upload files
-- `drive_file_get_metadata` - Get file metadata
-- `drive_file_update_metadata` - Update file metadata
-- `drive_folder_create` - Create folders
-- `drive_file_move` - Move files
-- `drive_file_copy` - Copy files
-- `drive_file_delete` - Delete files
-- `drive_file_trash` - Move files to trash
-- `drive_file_restore` - Restore files from trash
-- `drive_shared_link_create` - Create shareable links
-- `drive_permissions_list` - List file permissions
-- `drive_permissions_create` - Grant permissions
-- `drive_permissions_delete` - Remove permissions
+- `drive_files_list` - List files and folders (supports `account` parameter)
+- `drive_files_list_all_accounts` - List files from all authenticated accounts
+- `drive_files_search` - Search for files (supports `account` parameter)
+- `drive_file_download` - Download files (supports `account` parameter)
+- `drive_file_upload` - Upload files (supports `account` parameter)
+- `drive_markdown_upload` - Upload Markdown content as formatted Google Docs (RECOMMENDED for Markdown)
+- `drive_markdown_replace` - Replace Google Doc content with formatted Markdown
+- `drive_file_get_metadata` - Get file metadata (supports `account` parameter)
+- `drive_file_update_metadata` - Update file metadata (supports `account` parameter)
+- `drive_folder_create` - Create folders (supports `account` parameter)
+- `drive_file_move` - Move files (supports `account` parameter)
+- `drive_file_copy` - Copy files (supports `account` parameter)
+- `drive_file_delete` - Delete files (supports `account` parameter)
+- `drive_file_trash` - Move files to trash (supports `account` parameter)
+- `drive_file_restore` - Restore files from trash (supports `account` parameter)
+- `drive_shared_link_create` - Create shareable links (supports `account` parameter)
+- `drive_permissions_list` - List file permissions (supports `account` parameter)
+- `drive_permissions_create` - Grant permissions (supports `account` parameter)
+- `drive_permissions_delete` - Remove permissions (supports `account` parameter)
 
 ### Google Gmail
-- `gmail_messages_list` - List email messages
-- `gmail_messages_search` - Search emails
-- `gmail_message_get` - Get email details
-- (Additional tools in full implementation)
+- `gmail_messages_list` - List email messages (supports `account` parameter)
+- `gmail_messages_list_all_accounts` - List messages from all authenticated accounts
+- `gmail_message_get` - Get email details (supports `account` parameter)
 
 ### Google Sheets
 - `sheets_spreadsheet_get` - Get spreadsheet metadata
@@ -196,11 +199,13 @@ The server supports managing multiple Google accounts simultaneously with automa
 3. **Automatic account selection**:
    - When you reference a specific email or domain, the server automatically selects the correct account
    - Example: "Create an event in john@example.com's calendar" will use John's account
+   - You can explicitly specify an account using the `account` parameter in any tool
    - For ambiguous requests, the server will ask which account to use
 
 4. **Cross-account operations**:
-   - Search operations can span across all authenticated accounts
+   - Use `*_list_all_accounts` tools to search across all authenticated accounts
    - Results are organized by account for clarity
+   - Supported for Calendar (`calendar_events_list_all_accounts`), Gmail (`gmail_messages_list_all_accounts`), and Drive (`drive_files_list_all_accounts`)
 
 ### With Claude Desktop
 
@@ -279,7 +284,7 @@ Claude Code users can set up the Google MCP Server using either the `claude mcp 
    google-mcp-server
    # This will open a browser for authentication
    # Grant the requested permissions
-   # The token will be saved to ~/.google-mcp-token.json
+   # The token will be saved to ~/.google-mcp-accounts/<email>.json
    ```
 
 5. **Restart Claude Code** to apply the changes:
@@ -332,9 +337,10 @@ In Claude Code, you can test the connection by asking:
 - **Check MCP server list**: Run `claude mcp list` to verify the server is registered
 - **Remove and re-add**: If issues persist, use `claude mcp remove google` then add it again
 - **Ensure executable permissions**: `chmod +x /path/to/google-mcp-server`
-- **Verify token file**: Check that `~/.google-mcp-token.json` exists after authentication
+- **Verify token file**: Check that token files exist in `~/.google-mcp-accounts/` after authentication
 - **Test server directly**: Run `google-mcp-server --version` to ensure it works
 - **Check Claude Code logs**: Look for MCP server errors in Claude Code output
+- **For multi-account issues**: Check `~/.google-mcp-accounts/` directory for token files
 
 ### Programmatic Usage
 
@@ -383,7 +389,8 @@ See [WORKSPACE_SETUP.md](WORKSPACE_SETUP.md) for detailed instructions on config
 
 ## Security Considerations
 
-- **Token Storage**: OAuth tokens are stored locally in `~/.google-mcp-token.json` with restricted permissions
+- **Token Storage**: OAuth tokens are stored locally in `~/.google-mcp-accounts/` directory with restricted permissions
+- **Multi-Account Tokens**: Each account's token is stored in a separate file named by email address
 - **Scopes**: Only request the minimum necessary scopes for your use case
 - **Credentials**: Never commit OAuth credentials to version control
 - **Network**: Use HTTPS for all API communications
@@ -419,7 +426,8 @@ See [WORKSPACE_SETUP.md](WORKSPACE_SETUP.md) for detailed instructions on config
 
 5. **Token Expiration**
    - Tokens are automatically refreshed
-   - If refresh fails, re-authenticate by deleting the token file: `rm ~/.google-mcp-token.json`
+   - If refresh fails, re-authenticate by removing the account: `accounts_remove` then `accounts_add`
+   - Or delete specific token file: `rm ~/.google-mcp-accounts/<email>.json`
 
 ## Development
 

@@ -11,7 +11,6 @@ This guide will help you resolve the 403 access_denied error when authenticating
    - **Google Calendar API**
    - **Google Drive API**
    - **Gmail API**
-   - **Photos Library API**
    - **Google Sheets API**
    - **Google Docs API**
 
@@ -43,7 +42,6 @@ Click **SAVE AND CONTINUE**
    - `https://www.googleapis.com/auth/calendar`
    - `https://www.googleapis.com/auth/drive`
    - `https://www.googleapis.com/auth/gmail.modify`
-   - `https://www.googleapis.com/auth/photoslibrary`
    - `https://www.googleapis.com/auth/spreadsheets`
    - `https://www.googleapis.com/auth/documents`
    - `https://www.googleapis.com/auth/userinfo.email`
@@ -86,7 +84,6 @@ Create or edit `~/.google-mcp-server/config.json`:
     "calendar": {"enabled": true},
     "drive": {"enabled": true},
     "gmail": {"enabled": true},
-    "photos": {"enabled": true},
     "sheets": {"enabled": true},
     "docs": {"enabled": true}
   }
@@ -110,7 +107,16 @@ export GOOGLE_CLIENT_SECRET="YOUR_CLIENT_SECRET"
 2. A browser window will open automatically
 3. Sign in with your Google account (must be in the test users list if app is in testing mode)
 4. Review the permissions and click **Allow**
-5. The token will be saved to `~/.google-mcp-token.json`
+5. The token will be saved to `~/.google-mcp-accounts/<your-email>.json`
+
+### Multi-Account Support
+
+The server supports multiple Google accounts:
+- First authentication creates the default account
+- Use the `accounts_add` tool to add additional accounts
+- Each account's token is stored separately in `~/.google-mcp-accounts/`
+- The server automatically selects the appropriate account based on context
+- Use `accounts_list` to see all authenticated accounts
 
 ## Common Issues and Solutions
 
@@ -143,14 +149,14 @@ If all else fails:
 1. Delete the existing OAuth client
 2. Create a new OAuth client
 3. Update your config with new credentials
-4. Delete the old token: `rm ~/.google-mcp-token.json`
+4. Delete the old tokens: `rm -rf ~/.google-mcp-accounts/`
 5. Re-authenticate
 
 ## Security Notes
 
 - Never commit your OAuth credentials to version control
 - Keep your `client_secret` secure
-- The token file (`~/.google-mcp-token.json`) contains sensitive data - protect it with appropriate file permissions
+- Token files in `~/.google-mcp-accounts/` contain sensitive data - protect them with appropriate file permissions (automatically set to 0600)
 
 ## Need Help?
 
