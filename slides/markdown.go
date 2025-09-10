@@ -508,13 +508,6 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 
 			// Apply Courier New font to code blocks
 			if len(codeRanges) > 0 {
-				// Debug: Print what we're trying to format
-				fmt.Printf("DEBUG: Applying code formatting to %d ranges in placeholder %s\n", len(codeRanges), bodyPlaceholderId)
-				for i, cr := range codeRanges {
-					fmt.Printf("  Range %d: start=%d, end=%d\n", i, cr.start, cr.end)
-				}
-				fmt.Printf("  Combined text length (UTF-16): %d\n", len(utf16.Encode([]rune(combinedText))))
-				
 				err = mc.client.ApplyCodeFormattingToPlaceholder(mc.presentationId, bodyPlaceholderId, codeRanges)
 				if err != nil {
 					// Return the error so we can see what's happening
