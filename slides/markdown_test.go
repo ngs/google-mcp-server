@@ -100,6 +100,36 @@ func main() {
 			},
 		},
 		{
+			name: "Title slide with two headings only",
+			markdown: `## Main Title
+### Subtitle`,
+			want: []MarkdownSlide{
+				{
+					Title: "",
+					Content: []MarkdownElement{
+						{Type: "text", Content: "Main Title", Level: 2},
+						{Type: "text", Content: "Subtitle", Level: 3},
+					},
+				},
+			},
+		},
+		{
+			name: "Title slide with h1 title and two headings",
+			markdown: `# Presentation Title
+
+## Main Heading
+### Sub Heading`,
+			want: []MarkdownSlide{
+				{
+					Title: "Presentation Title",
+					Content: []MarkdownElement{
+						{Type: "text", Content: "Main Heading", Level: 2},
+						{Type: "text", Content: "Sub Heading", Level: 3},
+					},
+				},
+			},
+		},
+		{
 			name: "Slide with table",
 			markdown: `## Table Example
 
@@ -410,6 +440,137 @@ func TestMarkdownConverter_CreatePresentation(t *testing.T) {
 	}
 }
 
+func TestTitleSlideDetection(t *testing.T) {
+	tests := []struct {
+		name           string
+		slideIndex     int
+		slide          MarkdownSlide
+		wantTitleSlide bool
+	}{
+		{
+			name:       "First slide with two headings only",
+			slideIndex: 0,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Main Title", Level: 2},
+					{Type: "text", Content: "Subtitle", Level: 3},
+				},
+			},
+			wantTitleSlide: true,
+		},
+		{
+			name:       "Any slide with exactly two headings and no other content",
+			slideIndex: 2,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Section Title", Level: 2},
+					{Type: "text", Content: "Section Subtitle", Level: 3},
+				},
+			},
+			wantTitleSlide: true,
+		},
+		{
+			name:       "First slide with multiple headings",
+			slideIndex: 0,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Title 1", Level: 2},
+					{Type: "text", Content: "Title 2", Level: 3},
+					{Type: "text", Content: "Title 3", Level: 3},
+				},
+			},
+			wantTitleSlide: true, // First slide with only headings
+		},
+		{
+			name:       "Slide with headings and other content",
+			slideIndex: 1,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Title", Level: 2},
+					{Type: "text", Content: "Subtitle", Level: 3},
+					{Type: "text", Content: "Body text", Level: 0},
+				},
+			},
+			wantTitleSlide: false,
+		},
+		{
+			name:       "Slide with headings and bullet points",
+			slideIndex: 1,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Title", Level: 2},
+					{Type: "text", Content: "Subtitle", Level: 3},
+					{Type: "bullet", Content: "Item 1", Level: 0},
+				},
+			},
+			wantTitleSlide: false,
+		},
+		{
+			name:       "Slide with single heading",
+			slideIndex: 1,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Only Title", Level: 2},
+				},
+			},
+			wantTitleSlide: false, // Not exactly 2 headings for non-first slides
+		},
+		{
+			name:       "Slide with table",
+			slideIndex: 0,
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Title", Level: 2},
+					{Type: "text", Content: "Subtitle", Level: 3},
+					{Type: "table", Content: "table data", Level: 0},
+				},
+			},
+			wantTitleSlide: false, // Has table content
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the detection logic from CreateSlidesFromMarkdown
+			hasTable := false
+			for _, element := range tt.slide.Content {
+				if element.Type == "table" {
+					hasTable = true
+					break
+				}
+			}
+
+			isTitleSlide := false
+			if !hasTable {
+				headingCount := 0
+				nonHeadingCount := 0
+				for _, element := range tt.slide.Content {
+					if element.Type == "text" && element.Level > 0 {
+						headingCount++
+					} else if element.Type != "text" || element.Level == 0 {
+						nonHeadingCount++
+					}
+				}
+				// Consider it a title slide if it has exactly 2 headings and no other content
+				// OR if it's the first slide with only headings
+				isTitleSlide = (headingCount == 2 && nonHeadingCount == 0) ||
+					(tt.slideIndex == 0 && headingCount > 0 && nonHeadingCount == 0)
+			}
+
+			if isTitleSlide != tt.wantTitleSlide {
+				t.Errorf("Title slide detection = %v, want %v", isTitleSlide, tt.wantTitleSlide)
+			}
+		})
+	}
+}
+
 func TestCheckLayoutCompatibility(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -474,6 +635,102 @@ func TestCheckLayoutCompatibility(t *testing.T) {
 
 // TestParseTable would test the parseTable function if it were exported
 // Currently it's a private function in markdown.go
+
+// TestPopulateSlideWithTitleLayout tests the title slide layout logic
+// Since we can't easily mock the Client struct, we'll test the logic separately
+func TestPopulateSlideWithTitleLayoutLogic(t *testing.T) {
+	tests := []struct {
+		name             string
+		slide            MarkdownSlide
+		wantTitleText    string
+		wantSubtitleText string
+	}{
+		{
+			name: "Slide with title and two headings",
+			slide: MarkdownSlide{
+				Title: "Presentation Title",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Main Heading", Level: 2},
+					{Type: "text", Content: "Sub Heading", Level: 3},
+				},
+			},
+			wantTitleText:    "Presentation Title",
+			wantSubtitleText: "Main Heading\nSub Heading",
+		},
+		{
+			name: "Slide with only two headings (no explicit title)",
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "First Heading", Level: 2},
+					{Type: "text", Content: "Second Heading", Level: 3},
+				},
+			},
+			wantTitleText:    "First Heading",
+			wantSubtitleText: "Second Heading",
+		},
+		{
+			name: "Slide with multiple headings",
+			slide: MarkdownSlide{
+				Title: "",
+				Content: []MarkdownElement{
+					{Type: "text", Content: "Heading 1", Level: 2},
+					{Type: "text", Content: "Heading 2", Level: 3},
+					{Type: "text", Content: "Heading 3", Level: 3},
+				},
+			},
+			wantTitleText:    "Heading 1",
+			wantSubtitleText: "Heading 2\nHeading 3",
+		},
+		{
+			name: "Slide with title only",
+			slide: MarkdownSlide{
+				Title:   "Solo Title",
+				Content: []MarkdownElement{},
+			},
+			wantTitleText:    "Solo Title",
+			wantSubtitleText: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Extract headings from content (simulate populateSlideWithTitleLayout logic)
+			var headings []string
+			for _, element := range tt.slide.Content {
+				if element.Type == "text" && element.Level > 0 {
+					headings = append(headings, element.Content)
+				}
+			}
+
+			// Use slide title if provided, otherwise use first heading
+			titleText := tt.slide.Title
+			subtitleText := ""
+
+			if titleText != "" {
+				// If we have a slide title, use headings for subtitle
+				if len(headings) > 0 {
+					subtitleText = strings.Join(headings, "\n")
+				}
+			} else {
+				// No slide title, use headings as title and subtitle
+				if len(headings) > 0 {
+					titleText = headings[0]
+				}
+				if len(headings) > 1 {
+					subtitleText = strings.Join(headings[1:], "\n")
+				}
+			}
+
+			if titleText != tt.wantTitleText {
+				t.Errorf("Title text = %q, want %q", titleText, tt.wantTitleText)
+			}
+			if subtitleText != tt.wantSubtitleText {
+				t.Errorf("Subtitle text = %q, want %q", subtitleText, tt.wantSubtitleText)
+			}
+		})
+	}
+}
 
 func TestApplyCodeFormattingToPlaceholder(t *testing.T) {
 	// This test would require mocking the Google Slides API

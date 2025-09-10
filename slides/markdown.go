@@ -294,6 +294,9 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		layoutId = ""
 	}
 
+	// Get the TITLE layout ID for title slides (slides with only two headings)
+	titleLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE")
+
 	// Create all slides fresh
 	// Get the TITLE_ONLY layout ID for slides with tables
 	titleOnlyLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE_ONLY")
@@ -308,21 +311,47 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 			}
 		}
 
+		// Check if slide has only two headings (title slide pattern)
+		isTitleSlide := false
+		if titleLayoutId != "" && !hasTable {
+			headingCount := 0
+			nonHeadingCount := 0
+			for _, element := range slide.Content {
+				if element.Type == "text" && element.Level > 0 {
+					headingCount++
+				} else if element.Type != "text" || element.Level == 0 {
+					nonHeadingCount++
+				}
+			}
+			// Consider it a title slide if it has exactly 2 headings and no other content
+			// OR if it's the first slide (i == 0) with only headings
+			isTitleSlide = (headingCount == 2 && nonHeadingCount == 0) || (i == 0 && headingCount > 0 && nonHeadingCount == 0)
+		}
+
 		// Choose layout based on content
 		var resp *slides.BatchUpdatePresentationResponse
 		var useLayoutBased bool
-		if hasTable && titleOnlyLayoutId != "" {
+		var layoutType string
+		if isTitleSlide && titleLayoutId != "" {
+			// Use TITLE layout for title slides
+			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleLayoutId, -1)
+			useLayoutBased = true
+			layoutType = "TITLE"
+		} else if hasTable && titleOnlyLayoutId != "" {
 			// Use TITLE_ONLY layout for slides with tables
 			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleOnlyLayoutId, -1)
 			useLayoutBased = true
+			layoutType = "TITLE_ONLY"
 		} else if layoutId != "" {
 			// Use TITLE_AND_BODY layout for regular slides
 			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, layoutId, -1)
 			useLayoutBased = true
+			layoutType = "TITLE_AND_BODY"
 		} else {
 			// Fallback to blank slide
 			resp, err = mc.client.CreateSlide(mc.presentationId, -1)
 			useLayoutBased = false
+			layoutType = "BLANK"
 		}
 
 		if err != nil {
@@ -338,7 +367,10 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 
 		// Populate slide based on layout type and content
 		if useLayoutBased {
-			if hasTable && titleOnlyLayoutId != "" {
+			if layoutType == "TITLE" {
+				// Special handling for title slides
+				err = mc.populateSlideWithTitleLayout(slideId, slide)
+			} else if layoutType == "TITLE_ONLY" {
 				// Special handling for slides with tables (TITLE_ONLY layout)
 				err = mc.populateSlideWithTableLayout(slideId, slide)
 			} else {
@@ -508,6 +540,92 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 					return fmt.Errorf("failed to apply code formatting: %w", err)
 				}
 			}
+		}
+	}
+
+	return nil
+}
+
+// populateSlideWithTitleLayout populates a slide with TITLE layout (for title slides with only headings)
+func (mc *MarkdownConverter) populateSlideWithTitleLayout(slideId string, slide MarkdownSlide) error {
+	// Get the slide to find placeholder shapes
+	presentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return fmt.Errorf("failed to get presentation: %w", err)
+	}
+
+	// Find the slide we just created
+	var currentSlide *slides.Page
+	for _, s := range presentation.Slides {
+		if s.ObjectId == slideId {
+			currentSlide = s
+			break
+		}
+	}
+
+	if currentSlide == nil {
+		return fmt.Errorf("slide not found: %s", slideId)
+	}
+
+	// Find title and subtitle placeholders
+	var titlePlaceholderId, subtitlePlaceholderId string
+	for _, element := range currentSlide.PageElements {
+		if element.Shape != nil && element.Shape.Placeholder != nil {
+			switch element.Shape.Placeholder.Type {
+			case "TITLE", "CENTERED_TITLE":
+				titlePlaceholderId = element.ObjectId
+			case "SUBTITLE", "BODY":
+				subtitlePlaceholderId = element.ObjectId
+			}
+		}
+	}
+
+	// Extract headings from content
+	var headings []string
+	for _, element := range slide.Content {
+		if element.Type == "text" && element.Level > 0 {
+			headings = append(headings, element.Content)
+		}
+	}
+
+	// Use slide title if provided, otherwise use first heading
+	titleText := slide.Title
+	subtitleText := ""
+
+	if titleText != "" {
+		// If we have a slide title, use headings for subtitle
+		if len(headings) > 0 {
+			subtitleText = strings.Join(headings, "\n")
+		}
+	} else {
+		// No slide title, use headings as title and subtitle
+		if len(headings) > 0 {
+			titleText = headings[0]
+		}
+		if len(headings) > 1 {
+			subtitleText = strings.Join(headings[1:], "\n")
+		}
+	}
+
+	// Insert title
+	if titlePlaceholderId != "" && titleText != "" {
+		// Ignore error as placeholder might be empty
+		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
+
+		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, titleText)
+		if err != nil {
+			return fmt.Errorf("failed to insert title: %w", err)
+		}
+	}
+
+	// Insert subtitle
+	if subtitlePlaceholderId != "" && subtitleText != "" {
+		// Ignore error as placeholder might be empty
+		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, subtitlePlaceholderId)
+
+		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, subtitlePlaceholderId, subtitleText)
+		if err != nil {
+			return fmt.Errorf("failed to insert subtitle: %w", err)
 		}
 	}
 
