@@ -3,6 +3,9 @@ package auth
 import (
 	"fmt"
 	"strings"
+
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // HandleServiceError provides consistent error handling across all services
@@ -33,7 +36,7 @@ func HandleServiceError(err error, service string, account string) error {
 				"2. Wait a few minutes for the change to propagate\n"+
 				"3. Re-authenticate using: accounts_refresh\n"+
 				"4. Select account: %s",
-			strings.Title(service), account, apiURL, account,
+			cases.Title(language.English).String(service), account, apiURL, account,
 		)
 	}
 
@@ -50,7 +53,7 @@ func HandleServiceError(err error, service string, account string) error {
 				"1. Run: accounts_refresh\n"+
 				"2. Select account: %s\n"+
 				"3. Authorize all requested permissions",
-			strings.Title(service), account, account,
+			cases.Title(language.English).String(service), account, account,
 		)
 	}
 

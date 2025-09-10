@@ -16,14 +16,14 @@ func TestNewClient(t *testing.T) {
 	if err != nil && client != nil {
 		t.Error("NewClient() should return nil client when error occurs")
 	}
-	
+
 	// Test with actual HTTP client would require more setup
 	// This would typically be done with a mock server
 }
 
 func TestProcessMarkdownText(t *testing.T) {
 	client := &Client{}
-	
+
 	tests := []struct {
 		name string
 		text string
@@ -60,7 +60,7 @@ func TestProcessMarkdownText(t *testing.T) {
 			want: "Plain text without formatting",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got, _ := client.processMarkdownText(tt.text)
@@ -81,7 +81,7 @@ func TestFormatRange(t *testing.T) {
 		},
 		Fields: "bold",
 	}
-	
+
 	if fr.Start != 5 {
 		t.Errorf("FormatRange.Start = %d, want 5", fr.Start)
 	}
@@ -98,7 +98,7 @@ func TestFormatRange(t *testing.T) {
 
 func TestProcessMarkdownTextWithFormattingEdgeCases(t *testing.T) {
 	client := &Client{}
-	
+
 	tests := []struct {
 		name     string
 		text     string
@@ -140,12 +140,12 @@ func TestProcessMarkdownTextWithFormattingEdgeCases(t *testing.T) {
 			wantText: "go\nfunc main() {}\n", // Regex doesn't match language line properly, includes it
 		},
 		{
-			name:     "Link without URL",  
+			name:     "Link without URL",
 			text:     "[text]()",
 			wantText: "[text]()", // Empty URL links are not processed
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotText, _ := client.processMarkdownTextWithFormatting(tt.text)
@@ -158,7 +158,7 @@ func TestProcessMarkdownTextWithFormattingEdgeCases(t *testing.T) {
 
 func TestUTF16Encoding(t *testing.T) {
 	client := &Client{}
-	
+
 	tests := []struct {
 		name string
 		text string
@@ -185,16 +185,16 @@ func TestUTF16Encoding(t *testing.T) {
 			desc: "Multiple scripts in one text",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotText, gotFormats := client.processMarkdownTextWithFormatting(tt.text)
-			
+
 			// Verify text is processed without panic
 			if gotText == "" && tt.text != "" {
 				t.Errorf("processMarkdownTextWithFormatting() returned empty for non-empty input: %s", tt.desc)
 			}
-			
+
 			// Verify formats are within bounds
 			for i, format := range gotFormats {
 				if format.Start < 0 {
@@ -247,7 +247,7 @@ func TestApplyCodeFormattingRanges(t *testing.T) {
 			valid: true, // Should handle overlapping
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Skip actual API calls since we don't have a real service

@@ -113,9 +113,9 @@ func main() {
 					Content: []MarkdownElement{
 						{Type: "text", Content: "Table Example", Level: 2},
 						{
-							Type: "table",
+							Type:    "table",
 							Content: "",
-							Level: 0,
+							Level:   0,
 							Items: []string{
 								"| Header 1 | Header 2 |",
 								"| Cell 1   | Cell 2   |",
@@ -149,19 +149,19 @@ func main() {
 		t.Run(tt.name, func(t *testing.T) {
 			mc := &MarkdownConverter{}
 			got := mc.ParseMarkdown(tt.markdown)
-			
+
 			if len(got) != len(tt.want) {
 				t.Errorf("parseMarkdown() returned %d slides, want %d", len(got), len(tt.want))
 				return
 			}
-			
+
 			for i := range got {
 				if got[i].Title != tt.want[i].Title {
 					t.Errorf("Slide %d title = %q, want %q", i, got[i].Title, tt.want[i].Title)
 				}
-				
+
 				if !reflect.DeepEqual(got[i].Content, tt.want[i].Content) {
-					t.Errorf("Slide %d content mismatch\nGot: %+v\nWant: %+v", 
+					t.Errorf("Slide %d content mismatch\nGot: %+v\nWant: %+v",
 						i, got[i].Content, tt.want[i].Content)
 				}
 			}
@@ -197,7 +197,7 @@ func TestParseSection(t *testing.T) {
 			},
 		},
 		{
-			name: "Section with inline code",
+			name:    "Section with inline code",
 			section: "Use `fmt.Println()` to print",
 			want: MarkdownSlide{
 				Title: "",
@@ -207,7 +207,7 @@ func TestParseSection(t *testing.T) {
 			},
 		},
 		{
-			name: "Section with bold and italic",
+			name:    "Section with bold and italic",
 			section: "This is **bold** and *italic*",
 			want: MarkdownSlide{
 				Title: "",
@@ -222,13 +222,13 @@ func TestParseSection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			mc := &MarkdownConverter{}
 			got := mc.parseSection(tt.section)
-			
+
 			if got.Title != tt.want.Title {
 				t.Errorf("parseSection() title = %q, want %q", got.Title, tt.want.Title)
 			}
-			
+
 			if !reflect.DeepEqual(got.Content, tt.want.Content) {
-				t.Errorf("parseSection() content mismatch\nGot: %+v\nWant: %+v", 
+				t.Errorf("parseSection() content mismatch\nGot: %+v\nWant: %+v",
 					got.Content, tt.want.Content)
 			}
 		})
@@ -237,21 +237,21 @@ func TestParseSection(t *testing.T) {
 
 func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 	client := &Client{}
-	
+
 	tests := []struct {
-		name          string
-		text          string
-		wantText      string
+		name            string
+		text            string
+		wantText        string
 		wantFormatCount int
-		checkFormats  []struct {
+		checkFormats    []struct {
 			formatType string // "bold", "italic", "fontFamily", "link"
 			text       string
 		}
 	}{
 		{
-			name:          "Bold text",
-			text:          "This is **bold** text",
-			wantText:      "This is bold text",
+			name:            "Bold text",
+			text:            "This is **bold** text",
+			wantText:        "This is bold text",
 			wantFormatCount: 1,
 			checkFormats: []struct {
 				formatType string
@@ -261,9 +261,9 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 			},
 		},
 		{
-			name:          "Italic text",
-			text:          "This is *italic* text",
-			wantText:      "This is italic text",
+			name:            "Italic text",
+			text:            "This is *italic* text",
+			wantText:        "This is italic text",
 			wantFormatCount: 1,
 			checkFormats: []struct {
 				formatType string
@@ -273,9 +273,9 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 			},
 		},
 		{
-			name:          "Inline code",
-			text:          "Use `code` here",
-			wantText:      "Use code here",
+			name:            "Inline code",
+			text:            "Use `code` here",
+			wantText:        "Use code here",
 			wantFormatCount: 1,
 			checkFormats: []struct {
 				formatType string
@@ -285,9 +285,9 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 			},
 		},
 		{
-			name:          "Link",
-			text:          "Visit [Google](https://google.com)",
-			wantText:      "Visit Google",
+			name:            "Link",
+			text:            "Visit [Google](https://google.com)",
+			wantText:        "Visit Google",
 			wantFormatCount: 1,
 			checkFormats: []struct {
 				formatType string
@@ -297,10 +297,10 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 			},
 		},
 		{
-			name:          "Code block",
-			text:          "```\ncode block\n```",
-			wantText:      "\ncode block\n", // Regex includes newlines
-			wantFormatCount: 3, // May have multiple format ranges due to processing order
+			name:            "Code block",
+			text:            "```\ncode block\n```",
+			wantText:        "\ncode block\n", // Regex includes newlines
+			wantFormatCount: 3,                // May have multiple format ranges due to processing order
 			checkFormats: []struct {
 				formatType string
 				text       string
@@ -309,9 +309,9 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 			},
 		},
 		{
-			name:          "Mixed formatting",
-			text:          "**Bold** and *italic* with `code`",
-			wantText:      "Bold and italic with code",
+			name:            "Mixed formatting",
+			text:            "**Bold** and *italic* with `code`",
+			wantText:        "Bold and italic with code",
 			wantFormatCount: 3,
 			checkFormats: []struct {
 				formatType string
@@ -327,16 +327,16 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			gotText, gotFormats := client.processMarkdownTextWithFormatting(tt.text)
-			
+
 			if gotText != tt.wantText {
 				t.Errorf("processMarkdownTextWithFormatting() text = %q, want %q", gotText, tt.wantText)
 			}
-			
+
 			if len(gotFormats) != tt.wantFormatCount {
-				t.Errorf("processMarkdownTextWithFormatting() returned %d formats, want %d", 
+				t.Errorf("processMarkdownTextWithFormatting() returned %d formats, want %d",
 					len(gotFormats), tt.wantFormatCount)
 			}
-			
+
 			// Check that expected text portions have correct formatting
 			for _, check := range tt.checkFormats {
 				start := strings.Index(gotText, check.text)
@@ -344,13 +344,13 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 					t.Errorf("Expected text %q not found in output", check.text)
 					continue
 				}
-				
+
 				found := false
 				for _, format := range gotFormats {
 					// Check if this format covers the expected text
 					textStart := len([]rune(gotText[:start]))
 					textEnd := textStart + len([]rune(check.text))
-					
+
 					// Allow some flexibility in exact positions due to UTF-16 encoding
 					if format.Start <= textStart && format.End >= textEnd-1 {
 						switch check.formatType {
@@ -373,7 +373,7 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 						}
 					}
 				}
-				
+
 				if !found {
 					t.Errorf("Expected %s formatting for text %q not found", check.formatType, check.text)
 				}
@@ -385,11 +385,11 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 func TestGenerateId(t *testing.T) {
 	id1 := generateId()
 	id2 := generateId()
-	
+
 	if id1 == "" {
 		t.Error("generateId() returned empty string")
 	}
-	
+
 	if id1 == id2 {
 		t.Error("generateId() returned duplicate IDs")
 	}
@@ -399,12 +399,12 @@ func TestMarkdownConverter_CreatePresentation(t *testing.T) {
 	// This test would require mocking the Google Slides API
 	// For now, we'll just test the initialization
 	mc := NewMarkdownConverter(&Client{}, "test-presentation-id")
-	
+
 	if mc.presentationId != "test-presentation-id" {
-		t.Errorf("NewMarkdownConverter() presentationId = %q, want %q", 
+		t.Errorf("NewMarkdownConverter() presentationId = %q, want %q",
 			mc.presentationId, "test-presentation-id")
 	}
-	
+
 	if mc.client == nil {
 		t.Error("NewMarkdownConverter() client is nil")
 	}
@@ -462,7 +462,7 @@ func TestCheckLayoutCompatibility(t *testing.T) {
 	}
 
 	_ = &MarkdownConverter{} // Would be used if checkLayoutCompatibility was public
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// checkLayoutCompatibility is a private method, skip this test
@@ -481,12 +481,12 @@ func TestApplyCodeFormattingToPlaceholder(t *testing.T) {
 	client := &Client{
 		service: &slides.Service{},
 	}
-	
+
 	err := client.ApplyCodeFormattingToPlaceholder("test-id", "shape-id", nil)
 	if err != nil {
 		t.Errorf("ApplyCodeFormattingToPlaceholder() with nil ranges returned error: %v", err)
 	}
-	
+
 	err = client.ApplyCodeFormattingToPlaceholder("test-id", "shape-id", []struct {
 		start int
 		end   int

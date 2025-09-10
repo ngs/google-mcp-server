@@ -12,9 +12,9 @@ func TestServiceGetTools(t *testing.T) {
 	// Create a mock auth manager
 	mockAuth := &auth.AccountManager{}
 	service := NewService(mockAuth)
-	
+
 	tools := service.GetTools()
-	
+
 	// Check that we have the expected number of tools
 	expectedTools := []string{
 		"slides_presentation_create",
@@ -34,17 +34,17 @@ func TestServiceGetTools(t *testing.T) {
 		"slides_share",
 		// "slides_presentations_list_all_accounts" is in MultiAccountService, not Service
 	}
-	
+
 	if len(tools) != len(expectedTools) {
 		t.Errorf("GetTools() returned %d tools, want %d", len(tools), len(expectedTools))
 	}
-	
+
 	// Check that each expected tool exists
 	toolMap := make(map[string]bool)
 	for _, tool := range tools {
 		toolMap[tool.Name] = true
 	}
-	
+
 	for _, expectedName := range expectedTools {
 		if !toolMap[expectedName] {
 			t.Errorf("Tool %q not found in GetTools() result", expectedName)
@@ -56,13 +56,13 @@ func TestHandleToolCallErrors(t *testing.T) {
 	mockAuth := &auth.AccountManager{}
 	service := NewService(mockAuth)
 	ctx := context.Background()
-	
+
 	tests := []struct {
-		name       string
-		toolName   string
-		args       json.RawMessage
-		wantError  bool
-		errorMsg   string
+		name      string
+		toolName  string
+		args      json.RawMessage
+		wantError bool
+		errorMsg  string
 	}{
 		{
 			name:      "Unknown tool",
@@ -93,11 +93,11 @@ func TestHandleToolCallErrors(t *testing.T) {
 			errorMsg:  "",
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := service.HandleToolCall(ctx, tt.toolName, tt.args)
-			
+
 			if tt.wantError {
 				if err == nil {
 					t.Errorf("HandleToolCall() error = nil, want error containing %q", tt.errorMsg)
@@ -120,7 +120,7 @@ func TestToolDescriptions(t *testing.T) {
 	mockAuth := &auth.AccountManager{}
 	service := NewService(mockAuth)
 	tools := service.GetTools()
-	
+
 	for _, tool := range tools {
 		// Check that each tool has required fields
 		if tool.Name == "" {
@@ -133,19 +133,19 @@ func TestToolDescriptions(t *testing.T) {
 		if tool.InputSchema.Type == "" {
 			t.Errorf("Tool %q has empty InputSchema.Type", tool.Name)
 		}
-		
+
 		// Verify input schema is valid JSON
 		schemaJSON, err := json.Marshal(tool.InputSchema)
 		if err != nil {
 			t.Errorf("Tool %q has invalid InputSchema: %v", tool.Name, err)
 		}
-		
+
 		// Try to unmarshal back to ensure it's valid
 		var schema map[string]interface{}
 		if err := json.Unmarshal(schemaJSON, &schema); err != nil {
 			t.Errorf("Tool %q InputSchema cannot be unmarshaled: %v", tool.Name, err)
 		}
-		
+
 		// Check that schema has type field
 		if schemaType, ok := schema["type"]; !ok || schemaType != "object" {
 			t.Errorf("Tool %q InputSchema missing or invalid type field", tool.Name)
@@ -165,39 +165,39 @@ func TestPresentationListResponse(t *testing.T) {
 	response := map[string]interface{}{
 		"presentations": []map[string]interface{}{
 			{
-				"id":          "test-id-1",
-				"title":       "Test Presentation 1",
+				"id":           "test-id-1",
+				"title":        "Test Presentation 1",
 				"slides_count": 5,
-				"url":         "https://docs.google.com/presentation/d/test-id-1/edit",
-				"account":     "test@example.com",
+				"url":          "https://docs.google.com/presentation/d/test-id-1/edit",
+				"account":      "test@example.com",
 			},
 			{
-				"id":          "test-id-2",
-				"title":       "Test Presentation 2",
+				"id":           "test-id-2",
+				"title":        "Test Presentation 2",
 				"slides_count": 10,
-				"url":         "https://docs.google.com/presentation/d/test-id-2/edit",
-				"account":     "test2@example.com",
+				"url":          "https://docs.google.com/presentation/d/test-id-2/edit",
+				"account":      "test2@example.com",
 			},
 		},
 		"total_count": 2,
 	}
-	
+
 	// Test that response can be marshaled to JSON
 	jsonData, err := json.Marshal(response)
 	if err != nil {
 		t.Errorf("Failed to marshal response: %v", err)
 	}
-	
+
 	// Test that it can be unmarshaled back
 	var decoded map[string]interface{}
 	if err := json.Unmarshal(jsonData, &decoded); err != nil {
 		t.Errorf("Failed to unmarshal response: %v", err)
 	}
-	
+
 	if decoded["total_count"] != float64(2) {
 		t.Errorf("TotalCount mismatch: got %v, want %d", decoded["total_count"], 2)
 	}
-	
+
 	presentations, ok := decoded["presentations"].([]interface{})
 	if !ok {
 		t.Error("presentations field is not an array")
@@ -261,7 +261,7 @@ func TestToolInputValidation(t *testing.T) {
 			valid: true,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Marshal input to JSON
@@ -269,7 +269,7 @@ func TestToolInputValidation(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to marshal input: %v", err)
 			}
-			
+
 			// Validation would happen in HandleToolCall
 			// This is a simplified test - actual validation happens in the handler
 			if tt.valid {
@@ -288,7 +288,7 @@ func TestToolInputValidation(t *testing.T) {
 					}
 				}
 			}
-			
+
 			_ = inputJSON // Would be used in actual HandleToolCall
 		})
 	}
@@ -296,6 +296,6 @@ func TestToolInputValidation(t *testing.T) {
 
 // Helper function
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && s[:len(substr)] == substr || 
+	return len(s) >= len(substr) && s[:len(substr)] == substr ||
 		len(s) > len(substr) && contains(s[1:], substr)
 }

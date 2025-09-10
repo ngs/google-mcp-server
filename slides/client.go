@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"strings"
 	"time"
 	"unicode/utf16"
 
@@ -443,15 +442,15 @@ func (c *Client) processMarkdownTextWithFormatting(text string) (string, []Forma
 		if match == nil {
 			break
 		}
-		
+
 		// Extract code content
 		codeContent := result[match[2]:match[3]]
-		
+
 		// Calculate position for the code content after removing markers
 		beforeText := result[:match[0]]
 		start := len([]uint16(utf16.Encode([]rune(beforeText))))
 		end := start + len([]uint16(utf16.Encode([]rune(codeContent))))
-		
+
 		// Add format range for entire code block
 		formatRanges = append(formatRanges, FormatRange{
 			Start: start,
@@ -461,14 +460,14 @@ func (c *Client) processMarkdownTextWithFormatting(text string) (string, []Forma
 			},
 			Fields: "fontFamily",
 		})
-		
+
 		// Calculate markers length before modifying result
 		fullMatch := result[match[0]:match[1]]
 		markersLength := len([]uint16(utf16.Encode([]rune(fullMatch)))) - len([]uint16(utf16.Encode([]rune(codeContent))))
-		
+
 		// Replace code block with just the content
 		result = result[:match[0]] + codeContent + result[match[1]:]
-		
+
 		// Adjust existing format ranges
 		for i := range formatRanges[:len(formatRanges)-1] {
 			if formatRanges[i].Start > start {
@@ -479,21 +478,6 @@ func (c *Client) processMarkdownTextWithFormatting(text string) (string, []Forma
 	}
 
 	return result, formatRanges
-}
-
-// isCodeContent checks if the text content appears to be code based on original markdown
-func (c *Client) isCodeContent(originalText string) bool {
-	// Only detect actual code blocks that start with ``` (not inline code)
-	// Check for triple backticks at the start of lines
-	lines := strings.Split(originalText, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			return true
-		}
-	}
-
-	return false
 }
 
 // DeleteTextInPlaceholder deletes existing text in a placeholder

@@ -401,10 +401,8 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 	// Insert title if we have a title placeholder
 	if titlePlaceholderId != "" && slide.Title != "" {
 		// Delete existing placeholder text
-		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-		if err != nil {
-			// Ignore error as placeholder might be empty
-		}
+		// Ignore error as placeholder might be empty
+		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
 
 		// Insert new title text
 		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slide.Title)
@@ -416,10 +414,8 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 	// Insert body content if we have a body placeholder
 	if bodyPlaceholderId != "" && len(slide.Content) > 0 {
 		// Delete existing placeholder text
-		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, bodyPlaceholderId)
-		if err != nil {
-			// Ignore error as placeholder might be empty
-		}
+		// Ignore error as placeholder might be empty
+		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, bodyPlaceholderId)
 
 		// Find the first heading (Level 2 or 3) to use as title if slide.Title is empty
 		var slideTitle string
@@ -488,10 +484,8 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 
 		// If we found a heading and no slide title was set, use it as title
 		if slideTitle != "" && slide.Title == "" && titlePlaceholderId != "" {
-			_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-			if err != nil {
-				// Ignore error as placeholder might be empty
-			}
+			// Ignore error as placeholder might be empty
+			_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
 
 			_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slideTitle)
 			if err != nil {
@@ -566,10 +560,8 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 
 	if titlePlaceholderId != "" && titleText != "" {
 		// Delete existing placeholder text
-		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-		if err != nil {
-			// Ignore error as placeholder might be empty
-		}
+		// Ignore error as placeholder might be empty
+		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
 
 		// Insert title text
 		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, titleText)
