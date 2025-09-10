@@ -1,4 +1,4 @@
-.PHONY: build test clean install run lint fmt install-tools
+.PHONY: build test clean install run lint fmt install-tools set-version
 
 # Variables
 BINARY_NAME=google-mcp-server
@@ -75,6 +75,28 @@ example-config:
 	@echo "Generating example configuration..."
 	@$(GO) run . --generate-config > config.example.json
 
+# Set version and create git tag
+# Usage: make set-version VERSION=v0.2.0
+set-version:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION is not set. Usage: make set-version VERSION=v0.2.0"; \
+		exit 1; \
+	fi
+	@echo "Setting version to $(VERSION)..."
+	@# Strip 'v' prefix if present for the version string
+	@VERSION_NO_V=$$(echo $(VERSION) | sed 's/^v//'); \
+	echo "package server" > server/version.go; \
+	echo "" >> server/version.go; \
+	echo "// VERSION is the current version of the google-mcp-server" >> server/version.go; \
+	echo "const VERSION = \"$$VERSION_NO_V\"" >> server/version.go
+	@# Commit the version change
+	@git add server/version.go
+	@git commit -m "chore: bump version to $(VERSION)"
+	@# Create git tag with message
+	@git tag -a $(VERSION) -m "Release $(VERSION)"
+	@echo "Version set to $(VERSION) and git tag created"
+	@echo "To push the tag, run: git push origin $(VERSION)"
+
 # Help
 help:
 	@echo "Available targets:"
@@ -90,4 +112,5 @@ help:
 	@echo "  deps          - Download dependencies"
 	@echo "  update-deps   - Update dependencies"
 	@echo "  build-all     - Build for all platforms"
+	@echo "  set-version   - Set version and create git tag (VERSION=vX.Y.Z)"
 	@echo "  help          - Show this help"

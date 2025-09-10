@@ -226,7 +226,7 @@ func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req
 			Version string `json:"version"`
 		}{
 			Name:    "google-mcp-server",
-			Version: "0.1.0",
+			Version: VERSION,
 		},
 	}
 

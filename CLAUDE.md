@@ -155,11 +155,15 @@ For questions about implementation details or architectural decisions, refer to:
 
 ## Release Process
 
-1. Update version in main.go
-2. Run tests: `make test`
-3. Create git tag: `git tag v0.x.x`
-4. Push tag: `git push origin v0.x.x`
-5. GitHub Actions will handle the rest via GoReleaser
+1. Run tests: `make test`
+2. Set version and create tag: `make set-version VERSION=v0.x.x`
+3. Push tag: `git push origin v0.x.x`
+4. GitHub Actions will handle the rest via GoReleaser
+
+Note: The `make set-version` command will:
+- Regenerate server/version.go with the new VERSION const (strips 'v' prefix for internal version)
+- Commit the version change
+- Create an annotated git tag with the version message (keeps 'v' prefix for tag)
 
 ## Performance Optimization Tips
 
