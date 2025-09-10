@@ -82,6 +82,7 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
      - Gmail API
      - Google Sheets API
      - Google Docs API
+     - Google Slides API
 
 2. **Create OAuth 2.0 Credentials**
    - In Google Cloud Console, go to "APIs & Services" > "Credentials"
@@ -105,7 +106,8 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
        "drive": {"enabled": true},
        "gmail": {"enabled": true},
        "sheets": {"enabled": true},
-       "docs": {"enabled": true}
+       "docs": {"enabled": true},
+       "slides": {"enabled": true}
      }
    }
    ```
@@ -179,7 +181,25 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 ### Google Docs
 - `docs_document_get` - Get document content
 - `docs_document_create` - Create new documents
-- (Additional tools in full implementation)
+- `docs_document_update` - Update document content (append or replace)
+
+### Google Slides
+- `slides_presentation_create` - Create new presentation (supports `account` parameter)
+- `slides_presentation_get` - Get presentation metadata (supports `account` parameter)
+- `slides_presentations_list_all_accounts` - List presentations from all authenticated accounts
+- `slides_slide_create` - Create new slide (supports `account` parameter)
+- `slides_slide_delete` - Delete slide (supports `account` parameter)
+- `slides_slide_duplicate` - Duplicate slide (supports `account` parameter)
+- `slides_markdown_create` - Create presentation from Markdown with auto-pagination (supports `account` parameter)
+- `slides_markdown_update` - Update presentation with Markdown content (supports `account` parameter)
+- `slides_markdown_append` - Append slides from Markdown (supports `account` parameter)
+- `slides_add_text` - Add text box to slide (supports `account` parameter)
+- `slides_add_image` - Add image to slide (supports `account` parameter)
+- `slides_add_table` - Add table to slide (supports `account` parameter)
+- `slides_add_shape` - Add shape to slide (supports `account` parameter)
+- `slides_set_layout` - Set slide layout (supports `account` parameter)
+- `slides_export_pdf` - Export presentation as PDF (supports `account` parameter)
+- `slides_share` - Create shareable link (supports `account` parameter)
 
 ## Usage Examples
 
@@ -342,6 +362,57 @@ In Claude Code, you can test the connection by asking:
 - **Check Claude Code logs**: Look for MCP server errors in Claude Code output
 - **For multi-account issues**: Check `~/.google-mcp-accounts/` directory for token files
 
+### Markdown to Slides Feature
+
+The Google Slides integration includes powerful Markdown-to-Slides conversion with automatic pagination:
+
+```markdown
+# Title Slide
+Subtitle text
+
+---
+
+## Section Title
+- Bullet point 1
+- Bullet point 2
+  - Nested bullet
+
+---
+
+### Content Slide
+Regular paragraph text
+
+**Bold text** and *italic text*
+
+1. Numbered list
+2. Second item
+
+---
+
+![Image Title](https://example.com/image.png)
+
+---
+
+| Column 1 | Column 2 |
+|----------|----------|
+| Data 1   | Data 2   |
+
+---
+
+```code
+// Code block
+function example() {
+  return true;
+}
+```
+```
+
+Features:
+- **Auto-pagination**: Content automatically flows to new slides when exceeding page limits
+- **Force page breaks**: Use `---` to explicitly create new slides
+- **Configurable font size**: Default 14pt with automatic line height calculation
+- **Smart layout**: Titles, bullets, tables, images, and code blocks are properly formatted
+
 ### Programmatic Usage
 
 ```python
@@ -352,6 +423,16 @@ response = mcp_client.call_tool(
         "calendar_id": "primary",
         "time_min": "2024-01-01T00:00:00Z",
         "max_results": 10
+    }
+)
+
+# Example: Create presentation from Markdown
+response = mcp_client.call_tool(
+    "slides_markdown_create",
+    {
+        "title": "My Presentation",
+        "markdown": markdown_content,
+        "account": "user@example.com"
     }
 )
 ```

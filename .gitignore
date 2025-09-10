@@ -44,3 +44,5 @@ credentials.json
 # Test coverage
 coverage.txt
 coverage.html
+
+demo*

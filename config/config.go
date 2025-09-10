@@ -24,6 +24,7 @@ type ServicesConfig struct {
 	Gmail    GmailConfig    `json:"gmail"`
 	Sheets   SheetsConfig   `json:"sheets"`
 	Docs     DocsConfig     `json:"docs"`
+	Slides   SlidesConfig   `json:"slides"`
 }
 
 // AccountsConfig represents Accounts service configuration
@@ -72,6 +73,14 @@ type DocsConfig struct {
 	TemplateFolder string `json:"template_folder,omitempty"`
 }
 
+// SlidesConfig represents Slides service configuration
+type SlidesConfig struct {
+	Enabled         bool `json:"enabled"`
+	DefaultFontSize int  `json:"default_font_size,omitempty"`
+	SlideWidth      int  `json:"slide_width,omitempty"`
+	SlideHeight     int  `json:"slide_height,omitempty"`
+}
+
 // GlobalConfig represents global configuration
 type GlobalConfig struct {
 	LogLevel       string `json:"log_level,omitempty"`
@@ -92,6 +101,7 @@ func Load() (*Config, error) {
 			Gmail:    GmailConfig{Enabled: true},
 			Sheets:   SheetsConfig{Enabled: true},
 			Docs:     DocsConfig{Enabled: true},
+			Slides:   SlidesConfig{Enabled: true},
 		},
 		Global: GlobalConfig{
 			LogLevel:       "info",
@@ -165,6 +175,9 @@ func (c *Config) loadFromEnv() error {
 	if os.Getenv("DISABLE_DOCS") == "true" {
 		c.Services.Docs.Enabled = false
 	}
+	if os.Getenv("DISABLE_SLIDES") == "true" {
+		c.Services.Slides.Enabled = false
+	}
 
 	// Global settings
 	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
@@ -200,7 +213,8 @@ func (c *Config) validate() error {
 		!c.Services.Drive.Enabled &&
 		!c.Services.Gmail.Enabled &&
 		!c.Services.Sheets.Enabled &&
-		!c.Services.Docs.Enabled {
+		!c.Services.Docs.Enabled &&
+		!c.Services.Slides.Enabled {
 		return fmt.Errorf("at least one service must be enabled")
 	}
 
@@ -291,6 +305,12 @@ func SaveExample(path string) error {
 			Docs: DocsConfig{
 				Enabled:       true,
 				DefaultFormat: "text",
+			},
+			Slides: SlidesConfig{
+				Enabled:         true,
+				DefaultFontSize: 14,
+				SlideWidth:      720,
+				SlideHeight:     405,
 			},
 		},
 		Global: GlobalConfig{

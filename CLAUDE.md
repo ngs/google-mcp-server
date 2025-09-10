@@ -8,6 +8,13 @@ This is a Go-based MCP (Model Context Protocol) server that integrates with Goog
 
 ## Development Guidelines
 
+### Important Rules
+- **NEVER create test scripts or demo scripts** - Testing should be done through the MCP interface or existing tools
+- **DO NOT create standalone test programs** - Use the MCP server directly for testing functionality
+- **AVOID creating example/demo files** - The MCP server itself is the interface for testing
+- **NEVER write Go programs to call Google APIs directly** - Always use MCP tools or existing server functionality
+- **DO NOT create any executable programs** - If MCP tools are unavailable, investigate why and report the issue instead
+
 ### Code Style
 - Use Go idioms and best practices
 - Follow the existing code structure and patterns
@@ -181,3 +188,14 @@ When creating or uploading documents to Google Docs:
 - **For updating existing Google Docs with Markdown**: Use `mcp__google__drive_markdown_replace` tool
 - The `drive_markdown_upload` tool properly converts Markdown to Google Docs format with correct formatting
 - The `docs_document_create` and `docs_document_update` tools should only be used for plain text content without Markdown formatting
+
+## Google Slides Font Guidelines
+
+**IMPORTANT**: When applying monospace fonts for code content in Google Slides:
+- **ALWAYS use "Courier New"** - NOT "Courier"
+- This applies to:
+  - Inline code (backtick-wrapped text)
+  - Code blocks (triple-backtick-wrapped text)
+  - Any code-related content formatting
+- Google Slides recognizes "Courier New" as the standard monospace font
+- Using "Courier" instead of "Courier New" will result in incorrect font rendering
