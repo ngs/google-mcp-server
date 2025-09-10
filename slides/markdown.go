@@ -76,6 +76,8 @@ func (mc *MarkdownConverter) ParseMarkdown(markdown string) []MarkdownSlide {
 	return slides
 }
 
+var numberedListRegex = regexp.MustCompile(`^\d+\.\s+(.*)`)
+
 func (mc *MarkdownConverter) parseSection(section string) MarkdownSlide {
 	slide := MarkdownSlide{
 		Content: []MarkdownElement{},
@@ -166,10 +168,9 @@ func (mc *MarkdownConverter) parseSection(section string) MarkdownSlide {
 				Content: content,
 				Level:   level,
 			})
-		} else if matched, _ := regexp.MatchString(`^\d+\.\s+`, line); matched {
+		} else if numberedListRegex.MatchString(line) {
 			// Numbered list
-			re := regexp.MustCompile(`^\d+\.\s+(.*)`)
-			matches := re.FindStringSubmatch(line)
+			matches := numberedListRegex.FindStringSubmatch(line)
 			if len(matches) > 1 {
 				slide.Content = append(slide.Content, MarkdownElement{
 					Type:    "numbering",
@@ -267,7 +268,6 @@ func (mc *MarkdownConverter) estimateLineHeight(line string) float64 {
 
 func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slides.Page, error) {
 	parsedSlides := mc.ParseMarkdown(markdown)
-	slideIds := []string{}
 
 	// Get current presentation (not used but might be needed for validation)
 	_, err := mc.client.GetPresentation(mc.presentationId)
@@ -285,7 +285,6 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 
 		if len(resp.Replies) > 0 && resp.Replies[0].CreateSlide != nil {
 			slideId := resp.Replies[0].CreateSlide.ObjectId
-			slideIds = append(slideIds, slideId)
 
 			// Add content to slide
 			err = mc.populateSlide(slideId, slide)
@@ -429,10 +428,9 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 					}
 
 					// Populate table cells
-					if resp != nil && len(resp.Replies) > 0 {
-						// Table population would require additional API calls
-						// to insert text into each cell
-					}
+					// Note: Table population would require additional API calls
+					// to insert text into each cell - not implemented yet
+					_ = resp
 
 					currentY += tableHeight + 10
 				}
