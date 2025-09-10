@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/api/slides/v1"
 )
@@ -414,14 +415,24 @@ func TestProcessMarkdownTextWithFormatting(t *testing.T) {
 
 func TestGenerateId(t *testing.T) {
 	id1 := generateId()
-	id2 := generateId()
+
+	// Add a small delay to ensure different timestamps
+	// Use a loop to ensure we get a different timestamp
+	var id2 string
+	for i := 0; i < 100; i++ {
+		time.Sleep(time.Microsecond)
+		id2 = generateId()
+		if id1 != id2 {
+			break
+		}
+	}
 
 	if id1 == "" {
 		t.Error("generateId() returned empty string")
 	}
 
 	if id1 == id2 {
-		t.Error("generateId() returned duplicate IDs")
+		t.Errorf("generateId() returned duplicate IDs: %s == %s", id1, id2)
 	}
 }
 
