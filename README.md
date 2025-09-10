@@ -367,6 +367,12 @@ In Claude Code, you can test the connection by asking:
 The Google Slides integration includes powerful Markdown-to-Slides conversion with automatic pagination:
 
 ```markdown
+## Main Title
+### Subtitle
+(This creates a title slide with TITLE layout)
+
+---
+
 # Title Slide
 Subtitle text
 
@@ -412,6 +418,11 @@ Features:
 - **Force page breaks**: Use `---` to explicitly create new slides
 - **Configurable font size**: Default 14pt with automatic line height calculation
 - **Smart layout**: Titles, bullets, tables, images, and code blocks are properly formatted
+- **Title slide detection**: Slides with only two headings automatically use the TITLE layout for better visual presentation
+- **Layout optimization**: 
+  - TITLE layout: Used for slides with only headings (perfect for title/section slides)
+  - TITLE_AND_BODY layout: Used for regular content slides
+  - TITLE_ONLY layout: Used for slides containing tables
 
 ### Programmatic Usage
 

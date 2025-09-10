@@ -189,7 +189,9 @@ When creating or uploading documents to Google Docs:
 - The `drive_markdown_upload` tool properly converts Markdown to Google Docs format with correct formatting
 - The `docs_document_create` and `docs_document_update` tools should only be used for plain text content without Markdown formatting
 
-## Google Slides Font Guidelines
+## Google Slides Guidelines
+
+### Font Guidelines
 
 **IMPORTANT**: When applying monospace fonts for code content in Google Slides:
 - **ALWAYS use "Courier New"** - NOT "Courier"
@@ -199,3 +201,25 @@ When creating or uploading documents to Google Docs:
   - Any code-related content formatting
 - Google Slides recognizes "Courier New" as the standard monospace font
 - Using "Courier" instead of "Courier New" will result in incorrect font rendering
+
+### Layout Selection Logic
+
+The Slides service automatically selects the appropriate layout based on slide content:
+
+1. **TITLE Layout**: Used when a slide contains:
+   - Exactly 2 headings with no other content (any slide)
+   - Only headings and no other content (first slide only)
+   - Perfect for title slides and section dividers
+
+2. **TITLE_AND_BODY Layout**: Default layout for regular content slides containing:
+   - Mixed content (headings + text/bullets/code)
+   - Standard presentation content
+
+3. **TITLE_ONLY Layout**: Used for slides containing:
+   - Tables (provides more space for table content)
+
+### Implementation Notes
+
+- Title slide detection is implemented in `slides/markdown.go` in the `CreateSlidesFromMarkdown` function
+- The `populateSlideWithTitleLayout` function handles TITLE layout population
+- Test coverage includes `TestTitleSlideDetection` and `TestPopulateSlideWithTitleLayoutLogic`

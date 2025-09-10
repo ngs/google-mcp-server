@@ -312,6 +312,10 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		}
 
 		// Check if slide has only two headings (title slide pattern)
+		// Title slides are detected when:
+		// 1. A slide has exactly 2 headings with no other content (title + subtitle)
+		// 2. The first slide (index 0) contains only headings (common for presentation title slides)
+		// This provides better visual layout for title/section divider slides
 		isTitleSlide := false
 		if titleLayoutId != "" && !hasTable {
 			headingCount := 0
@@ -547,6 +551,8 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 }
 
 // populateSlideWithTitleLayout populates a slide with TITLE layout (for title slides with only headings)
+// This function is used for slides that contain only headings (typically 2: title and subtitle)
+// It maps the headings to the appropriate title and subtitle placeholders in the TITLE layout
 func (mc *MarkdownConverter) populateSlideWithTitleLayout(slideId string, slide MarkdownSlide) error {
 	// Get the slide to find placeholder shapes
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
