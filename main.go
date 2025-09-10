@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"go.ngs.io/google-mcp-server/gmail"
 	"go.ngs.io/google-mcp-server/server"
 	"go.ngs.io/google-mcp-server/sheets"
+	"go.ngs.io/google-mcp-server/slides"
 )
 
 func main() {
@@ -177,6 +179,35 @@ func registerServices(ctx context.Context, srv *server.MCPServer, accountManager
 			srv.RegisterService("docs", docsHandler)
 			// Docs service registered
 		}
+		// Add delay before next service
+		time.Sleep(serviceDelay)
+	}
+
+	// Initialize and register Slides service with multi-account support
+	if cfg.Services.Slides.Enabled {
+		log.Println("[DEBUG] Initializing Slides service...")
+		// Create service and multi-account service
+		slidesService := slides.NewService(accountManager)
+		slidesMultiAccount := slides.NewMultiAccountService(accountManager)
+
+		// Combine tools from both services
+		allTools := append(slidesService.GetTools(), slidesMultiAccount.GetTools()...)
+
+		// Create a combined handler wrapper
+		slidesHandler := server.NewCombinedHandler(
+			allTools,
+			func(ctx context.Context, name string, args json.RawMessage) (interface{}, error) {
+				// Try regular service first
+				if result, err := slidesService.HandleToolCall(ctx, name, args); err == nil {
+					return result, nil
+				}
+				// Fall back to multi-account service
+				return slidesMultiAccount.HandleToolCall(ctx, name, args)
+			},
+		)
+
+		srv.RegisterService("slides", slidesHandler)
+		log.Println("[DEBUG] Slides service registered with multi-account support")
 	}
 
 	return nil
