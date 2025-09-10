@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf16"
 
 	"google.golang.org/api/slides/v1"
 )
@@ -268,7 +269,6 @@ func (mc *MarkdownConverter) estimateLineHeight(line string) float64 {
 
 func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slides.Page, error) {
 	parsedSlides := mc.ParseMarkdown(markdown)
-	
 
 	// Get current presentation to check existing slides
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
@@ -286,10 +286,45 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		}
 	}
 
+	// Get the TITLE_AND_BODY layout ID
+	layoutId, err := mc.client.GetLayoutId(mc.presentationId, "TITLE_AND_BODY")
+	if err != nil {
+		// Fallback to blank slides if layout not found
+		fmt.Printf("Warning: failed to get TITLE_AND_BODY layout: %v\n", err)
+		layoutId = ""
+	}
+
 	// Create all slides fresh
+	// Get the TITLE_ONLY layout ID for slides with tables
+	titleOnlyLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE_ONLY")
+
 	for i, slide := range parsedSlides {
-		// Create a new slide at the end of the presentation
-		resp, err := mc.client.CreateSlide(mc.presentationId, -1)
+		// Check if slide contains tables
+		hasTable := false
+		for _, element := range slide.Content {
+			if element.Type == "table" {
+				hasTable = true
+				break
+			}
+		}
+
+		// Choose layout based on content
+		var resp *slides.BatchUpdatePresentationResponse
+		var useLayoutBased bool
+		if hasTable && titleOnlyLayoutId != "" {
+			// Use TITLE_ONLY layout for slides with tables
+			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleOnlyLayoutId, -1)
+			useLayoutBased = true
+		} else if layoutId != "" {
+			// Use TITLE_AND_BODY layout for regular slides
+			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, layoutId, -1)
+			useLayoutBased = true
+		} else {
+			// Fallback to blank slide
+			resp, err = mc.client.CreateSlide(mc.presentationId, -1)
+			useLayoutBased = false
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("failed to create slide %d: %w", i+1, err)
 		}
@@ -301,8 +336,20 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 			return nil, fmt.Errorf("failed to get slide ID for slide %d", i+1)
 		}
 
-		// Add content to slide
-		err = mc.populateSlide(slideId, slide)
+		// Populate slide based on layout type and content
+		if useLayoutBased {
+			if hasTable && titleOnlyLayoutId != "" {
+				// Special handling for slides with tables (TITLE_ONLY layout)
+				err = mc.populateSlideWithTableLayout(slideId, slide)
+			} else {
+				// Regular TITLE_AND_BODY layout
+				err = mc.populateSlideWithLayout(slideId, slide)
+			}
+		} else {
+			// Blank slide
+			err = mc.populateSlide(slideId, slide)
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
 		}
@@ -317,10 +364,361 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 	return updatedPresentation.Slides, nil
 }
 
+// populateSlideWithLayout populates a slide that uses a predefined layout
+func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide MarkdownSlide) error {
+	// Get the slide to find placeholder shapes
+	presentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return fmt.Errorf("failed to get presentation: %w", err)
+	}
+
+	// Find the slide we just created
+	var currentSlide *slides.Page
+	for _, s := range presentation.Slides {
+		if s.ObjectId == slideId {
+			currentSlide = s
+			break
+		}
+	}
+
+	if currentSlide == nil {
+		return fmt.Errorf("slide not found: %s", slideId)
+	}
+
+	// Find title and body placeholders
+	var titlePlaceholderId, bodyPlaceholderId string
+	for _, element := range currentSlide.PageElements {
+		if element.Shape != nil && element.Shape.Placeholder != nil {
+			switch element.Shape.Placeholder.Type {
+			case "TITLE", "CENTERED_TITLE":
+				titlePlaceholderId = element.ObjectId
+			case "BODY":
+				bodyPlaceholderId = element.ObjectId
+			}
+		}
+	}
+
+	// Insert title if we have a title placeholder
+	if titlePlaceholderId != "" && slide.Title != "" {
+		// Delete existing placeholder text
+		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
+		if err != nil {
+			// Ignore error as placeholder might be empty
+		}
+
+		// Insert new title text
+		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slide.Title)
+		if err != nil {
+			return fmt.Errorf("failed to insert title: %w", err)
+		}
+	}
+
+	// Insert body content if we have a body placeholder
+	if bodyPlaceholderId != "" && len(slide.Content) > 0 {
+		// Delete existing placeholder text
+		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, bodyPlaceholderId)
+		if err != nil {
+			// Ignore error as placeholder might be empty
+		}
+
+		// Find the first heading (Level 2 or 3) to use as title if slide.Title is empty
+		var slideTitle string
+		var bodyText []string
+		var codeRanges []struct {
+			start int
+			end   int
+		}
+
+		// Build the text and track code positions using UTF-16 code units
+		currentPos := 0
+		for i, element := range slide.Content {
+			switch element.Type {
+			case "text":
+				// If this is a heading (Level 2 or 3) and we don't have a slide title yet, use it as title
+				if (element.Level == 2 || element.Level == 3) && slideTitle == "" && slide.Title == "" {
+					slideTitle = element.Content
+				} else if element.Level > 0 {
+					// Other headings go to body with appropriate formatting
+					bodyText = append(bodyText, element.Content)
+					// Calculate UTF-16 length
+					currentPos += len(utf16.Encode([]rune(element.Content)))
+					if i < len(slide.Content)-1 {
+						currentPos += 1 // +1 for newline in UTF-16
+					}
+				} else {
+					// Regular text
+					bodyText = append(bodyText, element.Content)
+					currentPos += len(utf16.Encode([]rune(element.Content)))
+					if i < len(slide.Content)-1 {
+						currentPos += 1 // +1 for newline in UTF-16
+					}
+				}
+			case "bullet":
+				text := "• " + element.Content
+				bodyText = append(bodyText, text)
+				currentPos += len(utf16.Encode([]rune(text)))
+				if i < len(slide.Content)-1 {
+					currentPos += 1 // +1 for newline in UTF-16
+				}
+			case "numbering":
+				text := "1. " + element.Content
+				bodyText = append(bodyText, text)
+				currentPos += len(utf16.Encode([]rune(text)))
+				if i < len(slide.Content)-1 {
+					currentPos += 1 // +1 for newline in UTF-16
+				}
+			case "code":
+				// Track the position of code blocks for formatting using UTF-16 code units
+				codeStart := currentPos
+				codeEnd := currentPos + len(utf16.Encode([]rune(element.Content)))
+				codeRanges = append(codeRanges, struct {
+					start int
+					end   int
+				}{
+					start: codeStart,
+					end:   codeEnd,
+				})
+				bodyText = append(bodyText, element.Content)
+				currentPos = codeEnd
+				if i < len(slide.Content)-1 {
+					currentPos += 1 // +1 for newline in UTF-16
+				}
+			}
+		}
+
+		// If we found a heading and no slide title was set, use it as title
+		if slideTitle != "" && slide.Title == "" && titlePlaceholderId != "" {
+			_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
+			if err != nil {
+				// Ignore error as placeholder might be empty
+			}
+
+			_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slideTitle)
+			if err != nil {
+				return fmt.Errorf("failed to insert title: %w", err)
+			}
+		}
+
+		if len(bodyText) > 0 {
+			combinedText := strings.Join(bodyText, "\n")
+			_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, bodyPlaceholderId, combinedText)
+			if err != nil {
+				return fmt.Errorf("failed to insert body text: %w", err)
+			}
+
+			// Apply Courier New font to code blocks
+			if len(codeRanges) > 0 {
+				// Debug: Print what we're trying to format
+				fmt.Printf("DEBUG: Applying code formatting to %d ranges in placeholder %s\n", len(codeRanges), bodyPlaceholderId)
+				for i, cr := range codeRanges {
+					fmt.Printf("  Range %d: start=%d, end=%d\n", i, cr.start, cr.end)
+				}
+				fmt.Printf("  Combined text length (UTF-16): %d\n", len(utf16.Encode([]rune(combinedText))))
+				
+				err = mc.client.ApplyCodeFormattingToPlaceholder(mc.presentationId, bodyPlaceholderId, codeRanges)
+				if err != nil {
+					// Return the error so we can see what's happening
+					return fmt.Errorf("failed to apply code formatting: %w", err)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// populateSlideWithTableLayout populates a slide with TITLE_ONLY layout that contains tables
+func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide MarkdownSlide) error {
+	// Get the slide to find placeholder shapes
+	presentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return fmt.Errorf("failed to get presentation: %w", err)
+	}
+
+	// Find the slide we just created
+	var currentSlide *slides.Page
+	for _, s := range presentation.Slides {
+		if s.ObjectId == slideId {
+			currentSlide = s
+			break
+		}
+	}
+
+	if currentSlide == nil {
+		return fmt.Errorf("slide not found: %s", slideId)
+	}
+
+	// Find title placeholder
+	var titlePlaceholderId string
+	for _, element := range currentSlide.PageElements {
+		if element.Shape != nil && element.Shape.Placeholder != nil {
+			switch element.Shape.Placeholder.Type {
+			case "TITLE", "CENTERED_TITLE":
+				titlePlaceholderId = element.ObjectId
+			}
+		}
+	}
+
+	// Insert title - use slide title or first heading from content
+	titleText := slide.Title
+	if titleText == "" {
+		// Look for the first heading in content
+		for _, element := range slide.Content {
+			if element.Type == "text" && (element.Level == 2 || element.Level == 3) {
+				titleText = element.Content
+				break
+			}
+		}
+	}
+
+	if titlePlaceholderId != "" && titleText != "" {
+		// Delete existing placeholder text
+		_, err = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
+		if err != nil {
+			// Ignore error as placeholder might be empty
+		}
+
+		// Insert title text
+		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, titleText)
+		if err != nil {
+			return fmt.Errorf("failed to insert title: %w", err)
+		}
+	}
+
+	// Add content manually below the title
+	currentY := MarginTop + TitleFontSize*LineHeight*2 // Space below title
+
+	for _, element := range slide.Content {
+		switch element.Type {
+		case "text":
+			// Skip headings that were used as titles
+			if element.Level == 2 || element.Level == 3 {
+				continue
+			}
+
+			fontSize := DefaultFontSize
+			if element.Level == 1 {
+				fontSize = H1FontSize
+			}
+
+			_, err := mc.client.AddTextBox(
+				mc.presentationId,
+				slideId,
+				element.Content,
+				MarginLeft,
+				currentY,
+				SlideWidth-MarginLeft-MarginRight,
+				fontSize*LineHeight,
+			)
+			if err != nil {
+				return err
+			}
+			currentY += fontSize * LineHeight * 1.2
+
+		case "bullet", "numbering":
+			prefix := "• "
+			if element.Type == "numbering" {
+				prefix = "1. "
+			}
+
+			_, err := mc.client.AddTextBox(
+				mc.presentationId,
+				slideId,
+				prefix+element.Content,
+				MarginLeft,
+				currentY,
+				SlideWidth-MarginLeft-MarginRight,
+				DefaultFontSize*LineHeight,
+			)
+			if err != nil {
+				return err
+			}
+			currentY += DefaultFontSize * LineHeight
+
+		case "code":
+			// Add code block with Courier New font
+			_, err := mc.client.AddCodeTextBox(
+				mc.presentationId,
+				slideId,
+				element.Content,
+				MarginLeft,
+				currentY,
+				SlideWidth-MarginLeft-MarginRight,
+				100, // Fixed height for code blocks
+			)
+			if err != nil {
+				return err
+			}
+			currentY += 100 + 10
+
+		case "table":
+			if len(element.Items) > 0 {
+				rows := len(element.Items)
+				cols := strings.Count(element.Items[0], "|") - 1
+				if cols > 0 {
+					tableWidth := SlideWidth - MarginLeft - MarginRight
+					tableHeight := float64(rows) * 30.0
+
+					resp, err := mc.client.AddTable(
+						mc.presentationId,
+						slideId,
+						rows,
+						cols,
+						MarginLeft,
+						currentY,
+						tableWidth,
+						tableHeight,
+					)
+					if err != nil {
+						return err
+					}
+
+					// Populate table cells
+					if resp != nil && len(resp.Replies) > 0 && resp.Replies[0].CreateTable != nil {
+						tableId := resp.Replies[0].CreateTable.ObjectId
+
+						for rowIdx, row := range element.Items {
+							// Split by | and remove empty entries
+							cells := strings.Split(row, "|")
+							cellTexts := []string{}
+							for _, cell := range cells {
+								trimmed := strings.TrimSpace(cell)
+								if trimmed != "" {
+									cellTexts = append(cellTexts, trimmed)
+								}
+							}
+
+							// Insert text into each cell
+							for colIdx, cellText := range cellTexts {
+								if colIdx < cols {
+									_, err := mc.client.InsertTextInTableCell(
+										mc.presentationId,
+										tableId,
+										rowIdx,
+										colIdx,
+										cellText,
+									)
+									if err != nil {
+										// Log error but continue with other cells
+										fmt.Printf("Warning: failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
+									}
+								}
+							}
+						}
+					}
+
+					currentY += tableHeight + 10
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) error {
 	// All slides are now blank, so we add text boxes for everything
 	currentY := MarginTop
-	
 
 	// Add title if exists
 	if slide.Title != "" {
@@ -392,8 +790,8 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 			currentY += DefaultFontSize * LineHeight
 
 		case "code":
-			// Add code block with monospace font
-			_, err := mc.client.AddTextBox(
+			// Add code block with Courier New font
+			_, err := mc.client.AddCodeTextBox(
 				mc.presentationId,
 				slideId,
 				element.Content,
@@ -447,10 +845,40 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 						return err
 					}
 
-					// Populate table cells
-					// Note: Table population would require additional API calls
-					// to insert text into each cell - not implemented yet
-					_ = resp
+					// Get the table ID from the response
+					if resp != nil && len(resp.Replies) > 0 && resp.Replies[0].CreateTable != nil {
+						tableId := resp.Replies[0].CreateTable.ObjectId
+
+						// Populate table cells with text
+						for rowIdx, row := range element.Items {
+							// Split by | and remove empty entries
+							cells := strings.Split(row, "|")
+							cellTexts := []string{}
+							for _, cell := range cells {
+								trimmed := strings.TrimSpace(cell)
+								if trimmed != "" {
+									cellTexts = append(cellTexts, trimmed)
+								}
+							}
+
+							// Insert text into each cell
+							for colIdx, cellText := range cellTexts {
+								if colIdx < cols {
+									_, err := mc.client.InsertTextInTableCell(
+										mc.presentationId,
+										tableId,
+										rowIdx,
+										colIdx,
+										cellText,
+									)
+									if err != nil {
+										// Log error but continue with other cells
+										fmt.Printf("Warning: failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
+									}
+								}
+							}
+						}
+					}
 
 					currentY += tableHeight + 10
 				}

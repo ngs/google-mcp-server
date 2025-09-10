@@ -444,7 +444,7 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 	// Get account and HTTP client
 	var account *auth.Account
 	var httpClient *http.Client
-	
+
 	if accountEmail != "" {
 		var err error
 		account, err = s.authManager.GetAccount(accountEmail)
@@ -471,7 +471,7 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 	if account.OAuthClient == nil {
 		return nil, fmt.Errorf("no OAuth client for account: %s. Please re-authenticate using accounts_refresh", account.Email)
 	}
-	
+
 	httpClient = account.OAuthClient.GetHTTPClient()
 
 	// Create Slides client
@@ -518,11 +518,88 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 		if err != nil {
 			return nil, err
 		}
+
+		// Build detailed slide information
+		slides := make([]map[string]interface{}, 0, len(presentation.Slides))
+		for i, slide := range presentation.Slides {
+			slideInfo := map[string]interface{}{
+				"index":    i + 1,
+				"slide_id": slide.ObjectId,
+				"layout":   "",
+				"title":    "",
+				"elements": []map[string]interface{}{},
+			}
+
+			// Get layout information
+			if slide.SlideProperties != nil && slide.SlideProperties.LayoutObjectId != "" {
+				for _, layout := range presentation.Layouts {
+					if layout.ObjectId == slide.SlideProperties.LayoutObjectId {
+						if layout.LayoutProperties != nil {
+							slideInfo["layout"] = layout.LayoutProperties.Name
+						}
+						break
+					}
+				}
+			}
+
+			// Extract elements information
+			elements := make([]map[string]interface{}, 0)
+			for _, element := range slide.PageElements {
+				elementInfo := map[string]interface{}{
+					"element_id": element.ObjectId,
+					"type":       "",
+				}
+
+				if element.Shape != nil {
+					elementInfo["type"] = "shape"
+					if element.Shape.ShapeType != "" {
+						elementInfo["shape_type"] = element.Shape.ShapeType
+					}
+					if element.Shape.Text != nil && len(element.Shape.Text.TextElements) > 0 {
+						text := ""
+						fontFamily := ""
+						for _, textElement := range element.Shape.Text.TextElements {
+							if textElement.TextRun != nil {
+								text += textElement.TextRun.Content
+								if textElement.TextRun.Style != nil && textElement.TextRun.Style.FontFamily != "" {
+									fontFamily = textElement.TextRun.Style.FontFamily
+								}
+							}
+						}
+						elementInfo["text"] = text
+						if fontFamily != "" {
+							elementInfo["font_family"] = fontFamily
+						}
+					}
+					if element.Shape.Placeholder != nil {
+						elementInfo["placeholder_type"] = element.Shape.Placeholder.Type
+						if element.Shape.Placeholder.Type == "TITLE" || element.Shape.Placeholder.Type == "CENTERED_TITLE" {
+							slideInfo["title"] = elementInfo["text"]
+						}
+					}
+				} else if element.Table != nil {
+					elementInfo["type"] = "table"
+					elementInfo["rows"] = element.Table.Rows
+					elementInfo["columns"] = element.Table.Columns
+				} else if element.Image != nil {
+					elementInfo["type"] = "image"
+					if element.Image.ContentUrl != "" {
+						elementInfo["url"] = element.Image.ContentUrl
+					}
+				}
+
+				elements = append(elements, elementInfo)
+			}
+			slideInfo["elements"] = elements
+			slides = append(slides, slideInfo)
+		}
+
 		return map[string]interface{}{
 			"presentation_id": presentation.PresentationId,
 			"title":           presentation.Title,
 			"slides_count":    len(presentation.Slides),
 			"url":             fmt.Sprintf("https://docs.google.com/presentation/d/%s/edit", presentation.PresentationId),
+			"slides":          slides,
 		}, nil
 
 	case "slides_slide_create":

@@ -188,3 +188,14 @@ When creating or uploading documents to Google Docs:
 - **For updating existing Google Docs with Markdown**: Use `mcp__google__drive_markdown_replace` tool
 - The `drive_markdown_upload` tool properly converts Markdown to Google Docs format with correct formatting
 - The `docs_document_create` and `docs_document_update` tools should only be used for plain text content without Markdown formatting
+
+## Google Slides Font Guidelines
+
+**IMPORTANT**: When applying monospace fonts for code content in Google Slides:
+- **ALWAYS use "Courier New"** - NOT "Courier"
+- This applies to:
+  - Inline code (backtick-wrapped text)
+  - Code blocks (triple-backtick-wrapped text)
+  - Any code-related content formatting
+- Google Slides recognizes "Courier New" as the standard monospace font
+- Using "Courier" instead of "Courier New" will result in incorrect font rendering
