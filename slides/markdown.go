@@ -268,29 +268,43 @@ func (mc *MarkdownConverter) estimateLineHeight(line string) float64 {
 
 func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slides.Page, error) {
 	parsedSlides := mc.ParseMarkdown(markdown)
+	
 
-	// Get current presentation (not used but might be needed for validation)
-	_, err := mc.client.GetPresentation(mc.presentationId)
+	// Get current presentation to check existing slides
+	presentation, err := mc.client.GetPresentation(mc.presentationId)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create slides
+	// Delete the first slide if it exists (the default title slide)
+	if len(presentation.Slides) > 0 {
+		firstSlideId := presentation.Slides[0].ObjectId
+		_, err := mc.client.DeleteSlide(mc.presentationId, firstSlideId)
+		if err != nil {
+			// Log error but continue
+			fmt.Printf("Warning: failed to delete first slide: %v\n", err)
+		}
+	}
+
+	// Create all slides fresh
 	for i, slide := range parsedSlides {
-		// Create a new slide
-		resp, err := mc.client.CreateSlide(mc.presentationId, i+1)
+		// Create a new slide at the end of the presentation
+		resp, err := mc.client.CreateSlide(mc.presentationId, -1)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create slide %d: %w", i+1, err)
 		}
 
+		var slideId string
 		if len(resp.Replies) > 0 && resp.Replies[0].CreateSlide != nil {
-			slideId := resp.Replies[0].CreateSlide.ObjectId
+			slideId = resp.Replies[0].CreateSlide.ObjectId
+		} else {
+			return nil, fmt.Errorf("failed to get slide ID for slide %d", i+1)
+		}
 
-			// Add content to slide
-			err = mc.populateSlide(slideId, slide)
-			if err != nil {
-				return nil, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
-			}
+		// Add content to slide
+		err = mc.populateSlide(slideId, slide)
+		if err != nil {
+			return nil, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
 		}
 	}
 
@@ -304,11 +318,13 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 }
 
 func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) error {
+	// All slides are now blank, so we add text boxes for everything
 	currentY := MarginTop
+	
 
 	// Add title if exists
 	if slide.Title != "" {
-		_, err := mc.client.AddTextBox(
+		resp, err := mc.client.AddTextBox(
 			mc.presentationId,
 			slideId,
 			slide.Title,
@@ -318,7 +334,11 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 			TitleFontSize*LineHeight,
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to add title '%s': %w", slide.Title, err)
+		}
+		// Log response for debugging
+		if resp == nil || len(resp.Replies) == 0 {
+			return fmt.Errorf("no response for title '%s'", slide.Title)
 		}
 		currentY += TitleFontSize * LineHeight * 1.5
 	}

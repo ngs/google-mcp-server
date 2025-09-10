@@ -442,31 +442,50 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 	accountEmail, _ := args["account"].(string)
 
 	// Get account and HTTP client
+	var account *auth.Account
 	var httpClient *http.Client
+	
 	if accountEmail != "" {
-		account, err := s.authManager.GetAccount(accountEmail)
+		var err error
+		account, err = s.authManager.GetAccount(accountEmail)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get account: %w", err)
 		}
-		if account.OAuthClient == nil {
-			return nil, fmt.Errorf("no OAuth client for account: %s", accountEmail)
-		}
-		httpClient = account.OAuthClient.GetHTTPClient()
 	} else {
 		// Use first available account
 		accounts := s.authManager.ListAccounts()
 		if len(accounts) == 0 {
-			return nil, fmt.Errorf("no authenticated accounts available")
+			return nil, fmt.Errorf("no authenticated accounts available. Please authenticate using accounts_add")
 		}
-		if accounts[0].OAuthClient == nil {
-			return nil, fmt.Errorf("no OAuth client for account: %s", accounts[0].Email)
-		}
-		httpClient = accounts[0].OAuthClient.GetHTTPClient()
+		account = accounts[0]
 	}
+
+	// Check if account has required scopes for Slides
+	if err := s.authManager.CheckScopes(ctx, account, "slides"); err != nil {
+		if scopeErr, ok := err.(*auth.ScopeError); ok {
+			return nil, fmt.Errorf("%v\n\nTo fix this, run: accounts_refresh (and select account: %s)", scopeErr, account.Email)
+		}
+		return nil, err
+	}
+
+	if account.OAuthClient == nil {
+		return nil, fmt.Errorf("no OAuth client for account: %s. Please re-authenticate using accounts_refresh", account.Email)
+	}
+	
+	httpClient = account.OAuthClient.GetHTTPClient()
 
 	// Create Slides client
 	client, err := NewClient(ctx, httpClient)
 	if err != nil {
+		// Check if this is an API disabled error
+		if auth.IsAPIDisabledError(err) {
+			return nil, fmt.Errorf(
+				"Google Slides API is not enabled for this project.\n"+
+					"Please enable it at: https://console.cloud.google.com/apis/library/slides.googleapis.com\n"+
+					"Then re-authenticate using: accounts_refresh (account: %s)",
+				account.Email,
+			)
+		}
 		return nil, err
 	}
 
@@ -475,6 +494,16 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 		title, _ := args["title"].(string)
 		presentation, err := client.CreatePresentation(title)
 		if err != nil {
+			// Check if this is an API disabled error
+			if auth.IsAPIDisabledError(err) {
+				return nil, fmt.Errorf(
+					"Google Slides API is not enabled for this project.\n"+
+						"Account: %s\n"+
+						"Please enable it at: https://console.cloud.google.com/apis/library/slides.googleapis.com\n"+
+						"After enabling, wait a few minutes then re-authenticate using: accounts_refresh",
+					account.Email,
+				)
+			}
 			return nil, err
 		}
 		return map[string]interface{}{

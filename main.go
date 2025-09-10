@@ -198,11 +198,17 @@ func registerServices(ctx context.Context, srv *server.MCPServer, accountManager
 			allTools,
 			func(ctx context.Context, name string, args json.RawMessage) (interface{}, error) {
 				// Try regular service first
-				if result, err := slidesService.HandleToolCall(ctx, name, args); err == nil {
+				result, err := slidesService.HandleToolCall(ctx, name, args)
+				if err == nil {
 					return result, nil
 				}
-				// Fall back to multi-account service
-				return slidesMultiAccount.HandleToolCall(ctx, name, args)
+				// Check if it's an "unknown tool" error
+				if err.Error() == fmt.Sprintf("unknown tool: %s", name) {
+					// Fall back to multi-account service
+					return slidesMultiAccount.HandleToolCall(ctx, name, args)
+				}
+				// For other errors, return the original error
+				return nil, err
 			},
 		)
 

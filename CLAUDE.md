@@ -8,6 +8,13 @@ This is a Go-based MCP (Model Context Protocol) server that integrates with Goog
 
 ## Development Guidelines
 
+### Important Rules
+- **NEVER create test scripts or demo scripts** - Testing should be done through the MCP interface or existing tools
+- **DO NOT create standalone test programs** - Use the MCP server directly for testing functionality
+- **AVOID creating example/demo files** - The MCP server itself is the interface for testing
+- **NEVER write Go programs to call Google APIs directly** - Always use MCP tools or existing server functionality
+- **DO NOT create any executable programs** - If MCP tools are unavailable, investigate why and report the issue instead
+
 ### Code Style
 - Use Go idioms and best practices
 - Follow the existing code structure and patterns
