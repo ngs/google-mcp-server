@@ -133,7 +133,8 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	errChan := make(chan error, 1)
 
 	server := &http.Server{
-		Addr: ":8080",
+		Addr:              ":8080",
+		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			code := r.URL.Query().Get("code")
 			if code == "" {

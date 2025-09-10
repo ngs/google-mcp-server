@@ -18,11 +18,17 @@ type Config struct {
 
 // ServicesConfig represents configuration for all services
 type ServicesConfig struct {
+	Accounts AccountsConfig `json:"accounts"`
 	Calendar CalendarConfig `json:"calendar"`
 	Drive    DriveConfig    `json:"drive"`
 	Gmail    GmailConfig    `json:"gmail"`
 	Sheets   SheetsConfig   `json:"sheets"`
 	Docs     DocsConfig     `json:"docs"`
+}
+
+// AccountsConfig represents Accounts service configuration
+type AccountsConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 // CalendarConfig represents Calendar service configuration
@@ -80,6 +86,7 @@ func Load() (*Config, error) {
 	// Starting configuration load
 	cfg := &Config{
 		Services: ServicesConfig{
+			Accounts: AccountsConfig{Enabled: true},
 			Calendar: CalendarConfig{Enabled: true},
 			Drive:    DriveConfig{Enabled: true},
 			Gmail:    GmailConfig{Enabled: true},
@@ -169,7 +176,9 @@ func (c *Config) loadFromEnv() error {
 
 // loadFromFile loads configuration from a JSON file
 func (c *Config) loadFromFile(path string) error {
-	file, err := os.Open(path)
+	// Clean the path to prevent directory traversal
+	cleanPath := filepath.Clean(path)
+	file, err := os.Open(cleanPath)
 	if err != nil {
 		return err
 	}
@@ -243,6 +252,8 @@ func (c *Config) setDefaults() {
 
 // SaveExample saves an example configuration file
 func SaveExample(path string) error {
+	// Clean the path to prevent directory traversal
+	path = filepath.Clean(path)
 	example := &Config{
 		OAuth: auth.OAuthConfig{
 			ClientID:     "YOUR_CLIENT_ID.apps.googleusercontent.com",
