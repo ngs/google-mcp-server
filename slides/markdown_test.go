@@ -131,6 +131,42 @@ func main() {
 			},
 		},
 		{
+			name: "Slide with image and alt text",
+			markdown: `## Image Example
+
+![Test Image Description](https://example.com/image.png)`,
+			want: []MarkdownSlide{
+				{
+					Title: "",
+					Content: []MarkdownElement{
+						{Type: "text", Content: "Image Example", Level: 2},
+						{Type: "image", Content: "https://example.com/image.png", AltText: "Test Image Description"},
+					},
+				},
+			},
+		},
+		{
+			name: "Slide with multiple images",
+			markdown: `## Multiple Images
+
+![First Image](https://example.com/image1.png)
+
+Some text between images
+
+![Second Image](https://example.com/image2.png)`,
+			want: []MarkdownSlide{
+				{
+					Title: "",
+					Content: []MarkdownElement{
+						{Type: "text", Content: "Multiple Images", Level: 2},
+						{Type: "image", Content: "https://example.com/image1.png", AltText: "First Image"},
+						{Type: "text", Content: "Some text between images", Level: 0},
+						{Type: "image", Content: "https://example.com/image2.png", AltText: "Second Image"},
+					},
+				},
+			},
+		},
+		{
 			name: "Slide with table",
 			markdown: `## Table Example
 

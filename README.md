@@ -395,7 +395,11 @@ Regular paragraph text
 
 ---
 
-![Image Title](https://example.com/image.png)
+## Image Slide
+
+![Image Caption - This will appear below the image](https://example.com/image.png)
+
+Images are rendered at 50% of slide size and centered
 
 ---
 
@@ -418,11 +422,15 @@ Features:
 - **Force page breaks**: Use `---` to explicitly create new slides
 - **Configurable font size**: Default 14pt with automatic line height calculation
 - **Smart layout**: Titles, bullets, tables, images, and code blocks are properly formatted
+- **Image support**: 
+  - Images rendered at 50% of slide size, centered
+  - Alt text displayed as caption below the image
+  - Automatic TITLE_ONLY layout for slides with images
 - **Title slide detection**: Slides with only two headings automatically use the TITLE layout for better visual presentation
 - **Layout optimization**: 
   - TITLE layout: Used for slides with only headings (perfect for title/section slides)
   - TITLE_AND_BODY layout: Used for regular content slides
-  - TITLE_ONLY layout: Used for slides containing tables
+  - TITLE_ONLY layout: Used for slides containing tables or images (provides more space)
 
 ### Programmatic Usage
 

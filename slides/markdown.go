@@ -43,6 +43,7 @@ type MarkdownElement struct {
 	Content string
 	Level   int      // For headers and lists
 	Items   []string // For tables
+	AltText string   // For images
 }
 
 type MarkdownConverter struct {
@@ -186,6 +187,7 @@ func (mc *MarkdownConverter) parseSection(section string) MarkdownSlide {
 				slide.Content = append(slide.Content, MarkdownElement{
 					Type:    "image",
 					Content: matches[2], // URL
+					AltText: matches[1], // Alt text
 				})
 			}
 		} else if strings.TrimSpace(line) != "" {
@@ -302,14 +304,19 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 	titleOnlyLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE_ONLY")
 
 	for i, slide := range parsedSlides {
-		// Check if slide contains tables
+		// Check if slide contains tables or images (both need more space)
 		hasTable := false
+		hasImage := false
 		for _, element := range slide.Content {
 			if element.Type == "table" {
 				hasTable = true
-				break
+			}
+			if element.Type == "image" {
+				hasImage = true
 			}
 		}
+		// Use TITLE_ONLY layout for slides with tables or images
+		needsTitleOnlyLayout := hasTable || hasImage
 
 		// Check if slide has only two headings (title slide pattern)
 		// Title slides are detected when:
@@ -317,7 +324,7 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		// 2. The first slide (index 0) contains only headings (common for presentation title slides)
 		// This provides better visual layout for title/section divider slides
 		isTitleSlide := false
-		if titleLayoutId != "" && !hasTable {
+		if titleLayoutId != "" && !needsTitleOnlyLayout {
 			headingCount := 0
 			nonHeadingCount := 0
 			for _, element := range slide.Content {
@@ -341,8 +348,8 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleLayoutId, -1)
 			useLayoutBased = true
 			layoutType = "TITLE"
-		} else if hasTable && titleOnlyLayoutId != "" {
-			// Use TITLE_ONLY layout for slides with tables
+		} else if needsTitleOnlyLayout && titleOnlyLayoutId != "" {
+			// Use TITLE_ONLY layout for slides with tables or images
 			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleOnlyLayoutId, -1)
 			useLayoutBased = true
 			layoutType = "TITLE_ONLY"
@@ -638,7 +645,8 @@ func (mc *MarkdownConverter) populateSlideWithTitleLayout(slideId string, slide 
 	return nil
 }
 
-// populateSlideWithTableLayout populates a slide with TITLE_ONLY layout that contains tables
+// populateSlideWithTableLayout populates a slide with TITLE_ONLY layout that contains tables or images
+// This layout provides more space for content that needs it (tables, images)
 func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide MarkdownSlide) error {
 	// Get the slide to find placeholder shapes
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
@@ -759,6 +767,44 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 				return err
 			}
 			currentY += 100 + 10
+
+		case "image":
+			// Add image at 50% of slide size
+			imageWidth := SlideWidth * 0.5
+			imageHeight := SlideHeight * 0.5
+			imageX := (SlideWidth - imageWidth) / 2
+
+			_, err := mc.client.AddImage(
+				mc.presentationId,
+				slideId,
+				element.Content,
+				imageX,
+				currentY,
+				imageWidth,
+				imageHeight,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to add image: %w", err)
+			}
+			currentY += imageHeight + 10
+
+			// Add alt text as caption below image if present
+			if element.AltText != "" {
+				captionWidth := imageWidth
+				_, err := mc.client.AddTextBox(
+					mc.presentationId,
+					slideId,
+					element.AltText,
+					imageX,
+					currentY,
+					captionWidth,
+					DefaultFontSize*LineHeight,
+				)
+				if err != nil {
+					return fmt.Errorf("failed to add image caption: %w", err)
+				}
+				currentY += DefaultFontSize*LineHeight + 10
+			}
 
 		case "table":
 			if len(element.Items) > 0 {
@@ -915,14 +961,16 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 			currentY += 100 + 10
 
 		case "image":
-			// Add image centered
-			imageWidth := 400.0
-			imageHeight := 300.0
+			// Add image at 50% of slide size
+			imageWidth := SlideWidth * 0.5
+			imageHeight := SlideHeight * 0.5
+			imageX := (SlideWidth - imageWidth) / 2
+
 			_, err := mc.client.AddImage(
 				mc.presentationId,
 				slideId,
 				element.Content,
-				(SlideWidth-imageWidth)/2,
+				imageX,
 				currentY,
 				imageWidth,
 				imageHeight,
@@ -931,6 +979,24 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 				return err
 			}
 			currentY += imageHeight + 10
+
+			// Add alt text as caption below image if present
+			if element.AltText != "" {
+				captionWidth := imageWidth
+				_, err := mc.client.AddTextBox(
+					mc.presentationId,
+					slideId,
+					element.AltText,
+					imageX,
+					currentY,
+					captionWidth,
+					DefaultFontSize*LineHeight,
+				)
+				if err != nil {
+					return err
+				}
+				currentY += DefaultFontSize*LineHeight + 10
+			}
 
 		case "table":
 			if len(element.Items) > 0 {

@@ -221,9 +221,25 @@ The Slides service automatically selects the appropriate layout based on slide c
 
 3. **TITLE_ONLY Layout**: Used for slides containing:
    - Tables (provides more space for table content)
+   - Images (provides more space for visual content)
+
+### Image Support
+
+Images in markdown are handled with the following features:
+
+1. **Markdown Syntax**: `![alt text](image_url)`
+2. **Size**: Images are rendered at 50% of slide dimensions (360x270 pts)
+3. **Position**: Centered horizontally on the slide
+4. **Caption**: Alt text is displayed as a caption below the image
+5. **Layout**: Automatically uses TITLE_ONLY layout for more space
 
 ### Implementation Notes
 
 - Title slide detection is implemented in `slides/markdown.go` in the `CreateSlidesFromMarkdown` function
 - The `populateSlideWithTitleLayout` function handles TITLE layout population
-- Test coverage includes `TestTitleSlideDetection` and `TestPopulateSlideWithTitleLayoutLogic`
+- The `populateSlideWithTableLayout` function handles both tables and images in TITLE_ONLY layouts
+- Image parsing captures both URL and alt text in the `MarkdownElement` struct
+- Test coverage includes:
+  - `TestTitleSlideDetection` for layout selection logic
+  - `TestPopulateSlideWithTitleLayoutLogic` for title slide handling
+  - `TestParseMarkdown` includes image parsing tests with alt text
