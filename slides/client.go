@@ -5,12 +5,63 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 	"unicode/utf16"
 
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	"google.golang.org/api/slides/v1"
 )
+
+const (
+	maxRetries       = 10
+	initialBackoff   = 5 * time.Second
+	rateLimitBackoff = 60 * time.Second // Wait for quota reset on 429
+)
+
+// isRateLimitError checks if the error is a 429 rate limit error
+func isRateLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if apiErr, ok := err.(*googleapi.Error); ok {
+		return apiErr.Code == 429
+	}
+	return strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "rateLimitExceeded")
+}
+
+// doWithRetry executes a function with exponential backoff retry on rate limit errors
+func doWithRetry[T any](fn func() (T, error)) (T, error) {
+	var result T
+	var err error
+
+	for i := 0; i < maxRetries; i++ {
+		result, err = fn()
+		if err == nil {
+			return result, nil
+		}
+
+		if !isRateLimitError(err) {
+			return result, err
+		}
+
+		// Use 60 second backoff for rate limit to wait for quota reset
+		// Then use exponential backoff: 5, 10, 20, 40... for subsequent retries
+		var backoff time.Duration
+		if i == 0 {
+			backoff = rateLimitBackoff
+		} else {
+			backoff = initialBackoff * time.Duration(1<<(i-1))
+			if backoff > rateLimitBackoff {
+				backoff = rateLimitBackoff
+			}
+		}
+		time.Sleep(backoff)
+	}
+
+	return result, fmt.Errorf("max retries exceeded after rate limiting: %w", err)
+}
 
 type FormatRange struct {
 	Start  int
@@ -35,11 +86,15 @@ func (c *Client) CreatePresentation(title string) (*slides.Presentation, error) 
 	presentation := &slides.Presentation{
 		Title: title,
 	}
-	return c.service.Presentations.Create(presentation).Do()
+	return doWithRetry(func() (*slides.Presentation, error) {
+		return c.service.Presentations.Create(presentation).Do()
+	})
 }
 
 func (c *Client) GetPresentation(presentationId string) (*slides.Presentation, error) {
-	return c.service.Presentations.Get(presentationId).Do()
+	return doWithRetry(func() (*slides.Presentation, error) {
+		return c.service.Presentations.Get(presentationId).Do()
+	})
 }
 
 // GetLayoutId gets the layout ID by name from a presentation
@@ -107,7 +162,9 @@ func (c *Client) CreateSlide(presentationId string, insertionIndex int) (*slides
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 // CreateSlideWithLayout creates a new slide with a specific layout
@@ -134,7 +191,9 @@ func (c *Client) CreateSlideWithLayout(presentationId string, layoutId string, i
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) DeleteSlide(presentationId string, slideId string) (*slides.BatchUpdatePresentationResponse, error) {
@@ -150,7 +209,9 @@ func (c *Client) DeleteSlide(presentationId string, slideId string) (*slides.Bat
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) DuplicateSlide(presentationId string, slideId string) (*slides.BatchUpdatePresentationResponse, error) {
@@ -166,7 +227,9 @@ func (c *Client) DuplicateSlide(presentationId string, slideId string) (*slides.
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 // ReplaceAllTextInShape replaces all text in existing shapes on a slide
@@ -214,7 +277,9 @@ func (c *Client) ReplaceAllTextInSlide(presentationId string, slideId string, ol
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 // InsertTextInPlaceholder inserts text into a placeholder shape
@@ -257,7 +322,9 @@ func (c *Client) InsertTextInPlaceholder(presentationId string, shapeId string, 
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 // processMarkdownTextWithFormatting processes markdown with proper formatting for placeholders
@@ -497,7 +564,9 @@ func (c *Client) DeleteTextInPlaceholder(presentationId string, shapeId string) 
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) AddTextBox(presentationId string, slideId string, text string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
@@ -636,7 +705,9 @@ func (c *Client) AddCodeTextBox(presentationId string, slideId string, text stri
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) AddImage(presentationId string, slideId string, imageUrl string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
@@ -675,7 +746,9 @@ func (c *Client) AddImage(presentationId string, slideId string, imageUrl string
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) AddTable(presentationId string, slideId string, rows, columns int, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
@@ -729,7 +802,9 @@ func (c *Client) AddTable(presentationId string, slideId string, rows, columns i
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) AddShape(presentationId string, slideId string, shapeType string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
@@ -776,7 +851,9 @@ func (c *Client) AddShape(presentationId string, slideId string, shapeType strin
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) ApplyTemplate(presentationId string, templateId string) (*slides.BatchUpdatePresentationResponse, error) {
@@ -802,7 +879,9 @@ func (c *Client) SetSlideLayout(presentationId string, slideId string, layoutId 
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) (*slides.BatchUpdatePresentationResponse, error) {
@@ -810,7 +889,11 @@ func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) 
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
+	})
 }
 
 // InsertTextInTableCell inserts text into a specific table cell
@@ -833,7 +916,9 @@ func (c *Client) InsertTextInTableCell(presentationId string, tableId string, ro
 		Requests: requests,
 	}
 
-	return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+	})
 }
 
 // ApplyCodeFormattingToPlaceholder applies Courier New font to specific text ranges in a placeholder

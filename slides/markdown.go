@@ -61,8 +61,8 @@ func NewMarkdownConverter(client *Client, presentationId string) *MarkdownConver
 func (mc *MarkdownConverter) ParseMarkdown(markdown string) []MarkdownSlide {
 	slides := []MarkdownSlide{}
 
-	// Split by horizontal rules (---)
-	sections := strings.Split(markdown, "\n---\n")
+	// Split by horizontal rules (---) but ignore those inside code blocks
+	sections := mc.splitByPageBreaks(markdown)
 	if len(sections) == 1 {
 		// No explicit page breaks, try to auto-paginate
 		sections = mc.autoPaginate(markdown)
@@ -76,6 +76,48 @@ func (mc *MarkdownConverter) ParseMarkdown(markdown string) []MarkdownSlide {
 	}
 
 	return slides
+}
+
+// splitByPageBreaks splits markdown by --- but ignores those inside code blocks
+func (mc *MarkdownConverter) splitByPageBreaks(markdown string) []string {
+	var sections []string
+	var currentSection strings.Builder
+	lines := strings.Split(markdown, "\n")
+	inCodeBlock := false
+
+	for i, line := range lines {
+		// Track code block state
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
+		}
+
+		// Check for page break (--- on its own line, not in code block)
+		if !inCodeBlock && strings.TrimSpace(line) == "---" {
+			// End current section
+			section := strings.TrimSpace(currentSection.String())
+			if section != "" {
+				sections = append(sections, section)
+			}
+			currentSection.Reset()
+			continue
+		}
+
+		// Add line to current section
+		if currentSection.Len() > 0 {
+			currentSection.WriteString("\n")
+		}
+		currentSection.WriteString(line)
+
+		// Handle last line
+		if i == len(lines)-1 {
+			section := strings.TrimSpace(currentSection.String())
+			if section != "" {
+				sections = append(sections, section)
+			}
+		}
+	}
+
+	return sections
 }
 
 var numberedListRegex = regexp.MustCompile(`^\d+\.\s+(.*)`)
