@@ -85,9 +85,12 @@ jobs:
         cache: true
 
     - name: Run Gosec Security Scanner
-      uses: securego/gosec@master
-      with:
-        args: '-no-fail -fmt sarif -out gosec-results.sarif ./...'
+      run: |
+        go install github.com/securego/gosec/v2/cmd/gosec@latest
+        gosec -no-fail -fmt sarif -out gosec-results.sarif ./...
+        # Fix gosec SARIF output: remove null values from relationships arrays
+        jq 'walk(if type == "array" then map(select(. != null)) else . end)' gosec-results.sarif > gosec-results-fixed.sarif
+        mv gosec-results-fixed.sarif gosec-results.sarif
 
     - name: Run Trivy vulnerability scanner
       uses: aquasecurity/trivy-action@master
