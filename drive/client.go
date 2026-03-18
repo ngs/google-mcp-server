@@ -50,7 +50,9 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	defer cancel()
 
 	call := c.service.Files.List().
-		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)")
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true).
+		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, driveId)")
 
 	// Build the query
 	finalQuery := query
@@ -118,7 +120,8 @@ func (c *Client) SearchFiles(name, mimeType string, modifiedAfter string) ([]*dr
 // GetFile gets file metadata
 func (c *Client) GetFile(fileID string) (*drive.File, error) {
 	file, err := c.service.Files.Get(fileID).
-		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions").
+		SupportsAllDrives(true).
+		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions, driveId").
 		Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file: %w", err)
@@ -128,7 +131,7 @@ func (c *Client) GetFile(fileID string) (*drive.File, error) {
 
 // DownloadFile downloads a file
 func (c *Client) DownloadFile(fileID string, writer io.Writer) error {
-	resp, err := c.service.Files.Get(fileID).Download()
+	resp, err := c.service.Files.Get(fileID).SupportsAllDrives(true).Download()
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
@@ -153,7 +156,7 @@ func (c *Client) UploadFile(name string, mimeType string, reader io.Reader, pare
 		file.Parents = []string{parentID}
 	}
 
-	call := c.service.Files.Create(file)
+	call := c.service.Files.Create(file).SupportsAllDrives(true)
 	if reader != nil {
 		call = call.Media(reader)
 	}
@@ -176,7 +179,7 @@ func (c *Client) UpdateFileMetadata(fileID, name, description string) (*drive.Fi
 		file.Description = description
 	}
 
-	updated, err := c.service.Files.Update(fileID, file).Do()
+	updated, err := c.service.Files.Update(fileID, file).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to update file metadata: %w", err)
 	}
@@ -195,7 +198,7 @@ func (c *Client) CreateFolder(name string, parentID string) (*drive.File, error)
 		folder.Parents = []string{parentID}
 	}
 
-	created, err := c.service.Files.Create(folder).Do()
+	created, err := c.service.Files.Create(folder).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create folder: %w", err)
 	}
@@ -218,6 +221,7 @@ func (c *Client) MoveFile(fileID, newParentID string) (*drive.File, error) {
 	}
 
 	updated, err := c.service.Files.Update(fileID, &drive.File{}).
+		SupportsAllDrives(true).
 		AddParents(newParentID).
 		RemoveParents(removeParents).
 		Fields("id, parents").
@@ -237,7 +241,7 @@ func (c *Client) CopyFile(fileID, newName string) (*drive.File, error) {
 		copy.Name = newName
 	}
 
-	copied, err := c.service.Files.Copy(fileID, copy).Do()
+	copied, err := c.service.Files.Copy(fileID, copy).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy file: %w", err)
 	}
@@ -247,7 +251,7 @@ func (c *Client) CopyFile(fileID, newName string) (*drive.File, error) {
 
 // DeleteFile deletes a file
 func (c *Client) DeleteFile(fileID string) error {
-	err := c.service.Files.Delete(fileID).Do()
+	err := c.service.Files.Delete(fileID).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
@@ -256,7 +260,7 @@ func (c *Client) DeleteFile(fileID string) error {
 
 // TrashFile moves a file to trash
 func (c *Client) TrashFile(fileID string) error {
-	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: true}).Do()
+	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: true}).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to trash file: %w", err)
 	}
@@ -265,7 +269,7 @@ func (c *Client) TrashFile(fileID string) error {
 
 // RestoreFile restores a file from trash
 func (c *Client) RestoreFile(fileID string) error {
-	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: false}).Do()
+	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: false}).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)
 	}
@@ -279,7 +283,7 @@ func (c *Client) CreateShareLink(fileID string, role string) (string, error) {
 		Role: role, // "reader", "writer", etc.
 	}
 
-	_, err := c.service.Permissions.Create(fileID, permission).Do()
+	_, err := c.service.Permissions.Create(fileID, permission).SupportsAllDrives(true).Do()
 	if err != nil {
 		return "", fmt.Errorf("failed to create share link: %w", err)
 	}
@@ -295,6 +299,7 @@ func (c *Client) CreateShareLink(fileID string, role string) (string, error) {
 // ListPermissions lists file permissions
 func (c *Client) ListPermissions(fileID string) ([]*drive.Permission, error) {
 	permissions, err := c.service.Permissions.List(fileID).
+		SupportsAllDrives(true).
 		Fields("permissions(id, type, role, emailAddress)").
 		Do()
 	if err != nil {
@@ -313,6 +318,7 @@ func (c *Client) CreatePermission(fileID, email, role string) (*drive.Permission
 	}
 
 	created, err := c.service.Permissions.Create(fileID, permission).
+		SupportsAllDrives(true).
 		SendNotificationEmail(true).
 		Do()
 	if err != nil {
@@ -324,7 +330,7 @@ func (c *Client) CreatePermission(fileID, email, role string) (*drive.Permission
 
 // DeletePermission deletes a permission
 func (c *Client) DeletePermission(fileID, permissionID string) error {
-	err := c.service.Permissions.Delete(fileID, permissionID).Do()
+	err := c.service.Permissions.Delete(fileID, permissionID).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to delete permission: %w", err)
 	}
@@ -488,6 +494,7 @@ func (c *Client) UploadMarkdownAsDoc(ctx context.Context, name, markdown, parent
 	// Upload as Google Doc
 	reader := strings.NewReader(htmlContent)
 	driveFile, err := c.service.Files.Create(file).
+		SupportsAllDrives(true).
 		Media(reader).
 		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, createdTime").
 		Context(ctx).
@@ -504,6 +511,7 @@ func (c *Client) UploadMarkdownAsDoc(ctx context.Context, name, markdown, parent
 func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown string) (*drive.File, error) {
 	// First, get the file metadata to ensure it's a Google Doc
 	file, err := c.service.Files.Get(fileID).
+		SupportsAllDrives(true).
 		Fields("id, name, mimeType").
 		Context(ctx).
 		Do()
@@ -525,6 +533,7 @@ func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown st
 	// Update the file content
 	reader := strings.NewReader(htmlContent)
 	updatedFile, err := c.service.Files.Update(fileID, &drive.File{}).
+		SupportsAllDrives(true).
 		Media(reader).
 		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink").
 		Context(ctx).
