@@ -163,27 +163,62 @@ type Handler struct {
 }
 
 func (h *Handler) Handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	// Notifications (no id) must not receive a response per JSON-RPC 2.0.
+	// Replying to notifications confuses strict clients like Claude Code.
+	if req.Notif {
+		return
+	}
+
 	switch req.Method {
 	case "initialize":
 		h.handleInitialize(ctx, conn, req)
-	case "initialized":
-		// Client confirms initialization
+	case "notifications/initialized", "initialized":
+		// Client confirms initialization. Tolerate both spellings.
 	case "tools/list":
 		h.handleToolsList(ctx, conn, req)
 	case "tools/call":
 		h.handleToolCall(ctx, conn, req)
 	case "resources/list":
 		h.handleResourcesList(ctx, conn, req)
+	case "resources/templates/list":
+		h.handleResourceTemplatesList(ctx, conn, req)
 	case "resources/read":
 		h.handleResourceRead(ctx, conn, req)
+	case "prompts/list":
+		h.handlePromptsList(ctx, conn, req)
 	case "completion/complete":
 		h.handleCompletion(ctx, conn, req)
+	case "ping":
+		_ = conn.Reply(ctx, req.ID, struct{}{})
 	default:
 		_ = conn.ReplyWithError(ctx, req.ID, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
 			Message: fmt.Sprintf("method not found: %s", req.Method),
 		})
 	}
+}
+
+// handleResourceTemplatesList returns an empty list of resource templates.
+// MCP clients probe for this during initialization; without a handler, the
+// default method-not-found error can destabilize strict clients.
+func (h *Handler) handleResourceTemplatesList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	response := struct {
+		ResourceTemplates []Resource `json:"resourceTemplates"`
+	}{
+		ResourceTemplates: []Resource{},
+	}
+	_ = conn.Reply(ctx, req.ID, response)
+}
+
+// handlePromptsList returns an empty prompts list. This server exposes no
+// prompts, but clients expect a valid response rather than an error.
+func (h *Handler) handlePromptsList(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
+	response := struct {
+		Prompts []struct{} `json:"prompts"`
+	}{
+		Prompts: []struct{}{},
+	}
+	_ = conn.Reply(ctx, req.ID, response)
 }
 
 func (h *Handler) handleInitialize(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) {
