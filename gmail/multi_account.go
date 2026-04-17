@@ -2,6 +2,7 @@ package gmail
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -204,6 +205,28 @@ func (h *MultiAccountHandler) GetTools() []server.Tool {
 			},
 		},
 		{
+			Name:        "gmail_attachment_get",
+			Description: "Download an attachment from a Gmail message. Returns the attachment's base64url-encoded data plus filename and mime type. Attachment IDs come from gmail_message_get's 'attachments' list.",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"message_id": {
+						Type:        "string",
+						Description: "Message ID",
+					},
+					"attachment_id": {
+						Type:        "string",
+						Description: "Attachment ID (from gmail_message_get response)",
+					},
+					"account": {
+						Type:        "string",
+						Description: "Email address of the account to use (optional)",
+					},
+				},
+				Required: []string{"message_id", "attachment_id"},
+			},
+		},
+		{
 			Name:        "gmail_messages_list_all_accounts",
 			Description: "List messages from all authenticated accounts",
 			InputSchema: server.InputSchema{
@@ -221,6 +244,76 @@ func (h *MultiAccountHandler) GetTools() []server.Tool {
 			},
 		},
 	}
+}
+
+// extractBodyAndAttachments walks a message payload (including nested
+// multipart parts) to produce:
+//   - bodyText: the text/plain body if present
+//   - bodyHTML: the text/html body if present
+//   - attachments: metadata for every part with a Filename and an AttachmentId
+//
+// Bodies are base64url-decoded for convenience. Attachment bodies are NOT
+// fetched here — callers use gmail_attachment_get with the returned IDs.
+func extractBodyAndAttachments(part *gmail.MessagePart) (bodyText, bodyHTML string, attachments []map[string]interface{}) {
+	if part == nil {
+		return
+	}
+
+	decode := func(data string) string {
+		if data == "" {
+			return ""
+		}
+		raw, err := base64URLDecode(data)
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
+
+	// Leaf part: either a body or an attachment.
+	if len(part.Parts) == 0 {
+		if part.Filename != "" && part.Body != nil && part.Body.AttachmentId != "" {
+			attachments = append(attachments, map[string]interface{}{
+				"attachment_id": part.Body.AttachmentId,
+				"filename":      part.Filename,
+				"mime_type":     part.MimeType,
+				"size":          part.Body.Size,
+			})
+			return
+		}
+		if part.Body != nil && part.Body.Data != "" {
+			switch part.MimeType {
+			case "text/plain":
+				bodyText = decode(part.Body.Data)
+			case "text/html":
+				bodyHTML = decode(part.Body.Data)
+			}
+		}
+		return
+	}
+
+	// Multipart: recurse, merging bodies and attachments.
+	for _, child := range part.Parts {
+		t, h, atts := extractBodyAndAttachments(child)
+		if bodyText == "" && t != "" {
+			bodyText = t
+		}
+		if bodyHTML == "" && h != "" {
+			bodyHTML = h
+		}
+		attachments = append(attachments, atts...)
+	}
+	return
+}
+
+// base64URLDecode decodes Gmail's base64url-encoded payload data. Gmail omits
+// padding and uses the URL-safe alphabet per RFC 4648 §5.
+func base64URLDecode(s string) ([]byte, error) {
+	// Restore padding
+	if m := len(s) % 4; m != 0 {
+		s += strings.Repeat("=", 4-m)
+	}
+	return base64.URLEncoding.DecodeString(s)
 }
 
 // HandleToolCall handles a tool call for Gmail service with multi-account support
@@ -304,21 +397,66 @@ func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, a
 			"account":      accountUsed,
 		}
 
-		// Extract headers for easier access
-		if message.Payload != nil && message.Payload.Headers != nil {
-			headers := make(map[string]string)
-			for _, header := range message.Payload.Headers {
-				headers[header.Name] = header.Value
+		if message.Payload != nil {
+			if message.Payload.Headers != nil {
+				headers := make(map[string]string)
+				for _, header := range message.Payload.Headers {
+					headers[header.Name] = header.Value
+				}
+				result["headers"] = headers
 			}
-			result["headers"] = headers
 
-			// Add body if available
-			if message.Payload.Body != nil && message.Payload.Body.Data != "" {
-				result["body"] = message.Payload.Body.Data
+			// Walk the payload tree to produce decoded bodies and a flat list
+			// of attachment metadata. Attachment bodies are fetched separately
+			// via gmail_attachment_get using the returned attachment_id values.
+			bodyText, bodyHTML, attachments := extractBodyAndAttachments(message.Payload)
+			if bodyText != "" {
+				result["body_text"] = bodyText
+			}
+			if bodyHTML != "" {
+				result["body_html"] = bodyHTML
+			}
+			if len(attachments) > 0 {
+				result["attachments"] = attachments
 			}
 		}
 
 		return result, nil
+
+	case "gmail_attachment_get":
+		var args struct {
+			MessageID    string `json:"message_id"`
+			AttachmentID string `json:"attachment_id"`
+			Account      string `json:"account"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		client, accountUsed, err := h.multiClient.GetClientForContext(ctx, args.Account)
+		if err != nil {
+			if h.client != nil {
+				client = h.client
+				accountUsed = "default"
+			} else {
+				return nil, err
+			}
+		}
+
+		att, err := client.GetAttachment(args.MessageID, args.AttachmentID)
+		if err != nil {
+			return nil, err
+		}
+
+		return map[string]interface{}{
+			"account":       accountUsed,
+			"message_id":    args.MessageID,
+			"attachment_id": args.AttachmentID,
+			"size":          att.Size,
+			// Data is base64url-encoded per Gmail API. Consumers decode and
+			// write to disk or upload to Drive.
+			"data": att.Data,
+		}, nil
 
 	case "gmail_messages_list_all_accounts":
 		var args struct {

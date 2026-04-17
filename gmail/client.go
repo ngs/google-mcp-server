@@ -51,3 +51,13 @@ func (c *Client) GetMessage(messageID string) (*gmail.Message, error) {
 	}
 	return message, nil
 }
+
+// GetAttachment fetches the binary body of a message attachment. The returned
+// Data is base64url-encoded per the Gmail API MessagePartBody contract.
+func (c *Client) GetAttachment(messageID, attachmentID string) (*gmail.MessagePartBody, error) {
+	att, err := c.service.Users.Messages.Attachments.Get("me", messageID, attachmentID).Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get attachment: %w", err)
+	}
+	return att, nil
+}
