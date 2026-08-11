@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -119,10 +122,66 @@ func (c *OAuthClient) GetClientOption() option.ClientOption {
 	return option.WithHTTPClient(c.GetHTTPClient())
 }
 
+// defaultCallbackPort is used when the configured redirect URI has no usable port
+const defaultCallbackPort = 8080
+
+// redirectURIPort returns the port of the configured redirect URI, falling back
+// to defaultCallbackPort when it cannot be determined.
+func redirectURIPort(redirectURI string) int {
+	parsed, err := url.Parse(redirectURI)
+	if err != nil {
+		return defaultCallbackPort
+	}
+
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil || port <= 0 || port > 65535 {
+		return defaultCallbackPort
+	}
+
+	return port
+}
+
+// startCallbackListener listens on the loopback interface, preferring the given
+// port and falling back to an ephemeral one when it is already taken.
+func startCallbackListener(preferredPort int) (net.Listener, error) {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+	if err == nil {
+		return listener, nil
+	}
+
+	listener, err = net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("failed to start callback server: %w", err)
+	}
+
+	return listener, nil
+}
+
+// prepareCallback starts the callback listener and builds the authorization URL
+// for the port that was actually acquired.
+func (c *OAuthClient) prepareCallback() (net.Listener, string, error) {
+	listener, err := startCallbackListener(redirectURIPort(c.config.RedirectURL))
+	if err != nil {
+		return nil, "", err
+	}
+
+	// The redirect URI must match the port we ended up listening on, and it has
+	// to be set before the authorization URL is generated.
+	port := listener.Addr().(*net.TCPAddr).Port
+	c.config.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
+
+	return listener, c.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline), nil
+}
+
 // authenticate performs the OAuth2 authentication flow
 func (c *OAuthClient) authenticate(ctx context.Context) error {
-	// Generate authorization URL
-	authURL := c.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	// Start the callback listener first so the authorization URL carries the
+	// port we are actually listening on
+	listener, authURL, err := c.prepareCallback()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = listener.Close() }()
 
 	fmt.Printf("Opening browser for authentication...\n")
 	fmt.Printf("If browser doesn't open, visit this URL:\n%s\n", authURL)
@@ -137,7 +196,6 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	errChan := make(chan error, 1)
 
 	server := &http.Server{
-		Addr:              ":8080",
 		ReadHeaderTimeout: 10 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			code := r.URL.Query().Get("code")
@@ -158,7 +216,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	}
 
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errChan <- err
 		}
 	}()

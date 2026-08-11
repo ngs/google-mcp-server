@@ -2,9 +2,16 @@ package auth
 
 import (
 	"context"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 func TestDefaultScopes(t *testing.T) {
@@ -78,6 +85,119 @@ func TestNewOAuthClientWithoutAuth(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error with empty credentials")
 	}
+}
+
+func TestRedirectURIPort(t *testing.T) {
+	tests := []struct {
+		name        string
+		redirectURI string
+		want        int
+	}{
+		{"explicit port", "http://localhost:51011/callback", 51011},
+		{"default port", "http://localhost:8080/callback", 8080},
+		{"no port", "http://localhost/callback", defaultCallbackPort},
+		{"empty", "", defaultCallbackPort},
+		{"not a URL", "://nope", defaultCallbackPort},
+		{"out of range", "http://localhost:99999/callback", defaultCallbackPort},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := redirectURIPort(tt.redirectURI); got != tt.want {
+				t.Errorf("redirectURIPort(%q) = %d, want %d", tt.redirectURI, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStartCallbackListenerUsesPreferredPort(t *testing.T) {
+	preferredPort := freePort(t)
+
+	listener, err := startCallbackListener(preferredPort)
+	if err != nil {
+		t.Fatalf("startCallbackListener failed: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	if addr.Port != preferredPort {
+		t.Errorf("Expected port %d, got %d", preferredPort, addr.Port)
+	}
+	if !addr.IP.Equal(net.IPv4(127, 0, 0, 1)) {
+		t.Errorf("Expected listener bound to 127.0.0.1, got %s", addr.IP)
+	}
+}
+
+// TestAuthenticatePortFallback verifies that a busy preferred port makes the
+// callback fall back to an ephemeral port, and that the authorization URL
+// advertises the port we actually listen on.
+func TestAuthenticatePortFallback(t *testing.T) {
+	busyPort := freePort(t)
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", busyPort))
+	if err != nil {
+		t.Fatalf("Failed to occupy port %d: %v", busyPort, err)
+	}
+	defer func() { _ = blocker.Close() }()
+
+	client := &OAuthClient{
+		config: &oauth2.Config{
+			ClientID:     "test-id",
+			ClientSecret: "test-secret",
+			RedirectURL:  fmt.Sprintf("http://localhost:%d/callback", busyPort),
+			Scopes:       DefaultScopes(),
+			Endpoint:     google.Endpoint,
+		},
+	}
+
+	listener, authURL, err := client.prepareCallback()
+	if err != nil {
+		t.Fatalf("prepareCallback failed: %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	addr := listener.Addr().(*net.TCPAddr)
+	if addr.Port == busyPort {
+		t.Fatalf("Expected fallback to a different port, got the busy port %d", busyPort)
+	}
+	if !addr.IP.Equal(net.IPv4(127, 0, 0, 1)) {
+		t.Errorf("Expected listener bound to 127.0.0.1, got %s", addr.IP)
+	}
+
+	// The authorization URL must point at the port we actually listen on
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("Failed to parse authorization URL: %v", err)
+	}
+	redirectURI, err := url.Parse(parsed.Query().Get("redirect_uri"))
+	if err != nil {
+		t.Fatalf("Failed to parse redirect_uri: %v", err)
+	}
+	if redirectURI.Port() != strconv.Itoa(addr.Port) {
+		t.Errorf("redirect_uri port is %s, want %d", redirectURI.Port(), addr.Port)
+	}
+
+	// The fallback port must actually be reachable
+	conn, err := net.Dial("tcp", addr.String())
+	if err != nil {
+		t.Fatalf("Failed to connect to callback listener: %v", err)
+	}
+	_ = conn.Close()
+}
+
+// freePort returns a port that is free at the moment it is called.
+func freePort(t *testing.T) int {
+	t.Helper()
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Failed to find a free port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Failed to release port %d: %v", port, err)
+	}
+
+	return port
 }
 
 func TestNilOAuthClientAccessors(t *testing.T) {
