@@ -124,13 +124,11 @@ func NewMultiAccountHandler(accountManager *auth.AccountManager, defaultClient *
 	}
 }
 
-// GetTools returns the available Sheets tools with an added account parameter
+// GetTools returns the available Sheets tools with an added account parameter.
+// The tool list does not depend on a default OAuth client being available, so
+// the tools stay visible in multi-account-only setups.
 func (h *MultiAccountHandler) GetTools() []server.Tool {
-	if h.handler == nil {
-		return []server.Tool{}
-	}
-
-	tools := h.handler.GetTools()
+	tools := defaultSheetsTools()
 
 	// Add account parameter to existing tools
 	for i := range tools {

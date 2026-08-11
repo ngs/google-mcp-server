@@ -50,7 +50,7 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	defer cancel()
 
 	call := c.service.Files.List().
-		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)").
+		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, driveId)").
 		SupportsAllDrives(true).
 		IncludeItemsFromAllDrives(true)
 
@@ -176,7 +176,7 @@ func (c *Client) isDescendantOf(parents []string, targetFolderID string, cache m
 // GetFile gets file metadata
 func (c *Client) GetFile(fileID string) (*drive.File, error) {
 	file, err := c.service.Files.Get(fileID).
-		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions").
+		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions, driveId").
 		SupportsAllDrives(true).
 		Do()
 	if err != nil {
