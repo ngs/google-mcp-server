@@ -165,10 +165,10 @@ func (c *OAuthClient) prepareCallback() (net.Listener, string, error) {
 		return nil, "", err
 	}
 
-	// The redirect URI must match the port we ended up listening on, and it has
-	// to be set before the authorization URL is generated.
-	port := listener.Addr().(*net.TCPAddr).Port
-	c.config.RedirectURL = fmt.Sprintf("http://localhost:%d/callback", port)
+	// The redirect URI must point at the exact address we ended up listening on
+	// ("localhost" may resolve to ::1 while the listener is IPv4-only), and it
+	// has to be set before the authorization URL is generated.
+	c.config.RedirectURL = fmt.Sprintf("http://%s/callback", listener.Addr().String())
 
 	return listener, c.config.AuthCodeURL("state-token", oauth2.AccessTypeOffline), nil
 }

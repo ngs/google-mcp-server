@@ -175,6 +175,9 @@ func TestAuthenticatePortFallback(t *testing.T) {
 	if redirectURI.Port() != strconv.Itoa(addr.Port) {
 		t.Errorf("redirect_uri port is %s, want %d", redirectURI.Port(), addr.Port)
 	}
+	if redirectURI.Hostname() != addr.IP.String() {
+		t.Errorf("redirect_uri host is %s, want the bound address %s", redirectURI.Hostname(), addr.IP)
+	}
 
 	// The fallback port must actually be reachable
 	conn, err := net.Dial("tcp", addr.String())
