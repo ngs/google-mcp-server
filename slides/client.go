@@ -75,6 +75,10 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, client *http.Client) (*Client, error) {
+	if client == nil {
+		return nil, fmt.Errorf("no authenticated HTTP client available")
+	}
+
 	service, err := slides.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create slides service: %w", err)
@@ -891,8 +895,8 @@ func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) 
 
 	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
 		return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+			return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+		})
 	})
 }
 

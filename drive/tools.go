@@ -23,6 +23,12 @@ func NewHandler(client *Client) *Handler {
 
 // GetTools returns the available Drive tools
 func (h *Handler) GetTools() []server.Tool {
+	return defaultDriveTools()
+}
+
+// defaultDriveTools returns the Drive tool definitions. It is shared by Handler
+// and MultiAccountHandler so the definitions are not maintained twice.
+func defaultDriveTools() []server.Tool {
 	return []server.Tool{
 		{
 			Name:        "drive_files_list",

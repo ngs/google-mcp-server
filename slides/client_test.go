@@ -11,9 +11,10 @@ func TestNewClient(t *testing.T) {
 	// Test with nil HTTP client
 	ctx := context.Background()
 	client, err := NewClient(ctx, nil)
-	// The actual behavior depends on the Google API client library
-	// It may or may not return an error with nil client
-	if err != nil && client != nil {
+	if err == nil {
+		t.Fatal("NewClient() should return an error when the HTTP client is nil")
+	}
+	if client != nil {
 		t.Error("NewClient() should return nil client when error occurs")
 	}
 
