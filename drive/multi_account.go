@@ -212,47 +212,43 @@ func NewMultiAccountHandler(accountManager *auth.AccountManager, defaultClient *
 	}
 }
 
-// GetTools returns the available Drive tools with multi-account support
+// GetTools returns the available Drive tools with multi-account support.
+// The tool list does not depend on a default OAuth client being available, so
+// the tools stay visible in multi-account-only setups.
 func (h *MultiAccountHandler) GetTools() []server.Tool {
-	// Get original tools from handler
-	if h.handler != nil {
-		tools := h.handler.GetTools()
+	tools := defaultDriveTools()
 
-		// Add account parameter to existing tools
-		for i := range tools {
-			if tools[i].InputSchema.Properties == nil {
-				tools[i].InputSchema.Properties = make(map[string]server.Property)
-			}
-			tools[i].InputSchema.Properties["account"] = server.Property{
-				Type:        "string",
-				Description: "Email address of the account to use (optional)",
-			}
+	// Add account parameter to existing tools
+	for i := range tools {
+		if tools[i].InputSchema.Properties == nil {
+			tools[i].InputSchema.Properties = make(map[string]server.Property)
 		}
-
-		// Add new multi-account specific tools
-		tools = append(tools, server.Tool{
-			Name:        "drive_files_list_all_accounts",
-			Description: "List files from all authenticated accounts",
-			InputSchema: server.InputSchema{
-				Type: "object",
-				Properties: map[string]server.Property{
-					"parent_id": {
-						Type:        "string",
-						Description: "Parent folder ID (optional, defaults to root)",
-					},
-					"page_size": {
-						Type:        "number",
-						Description: "Number of files per account (max 1000)",
-					},
-				},
-			},
-		})
-
-		return tools
+		tools[i].InputSchema.Properties["account"] = server.Property{
+			Type:        "string",
+			Description: "Email address of the account to use (optional)",
+		}
 	}
 
-	// Return empty if no handler
-	return []server.Tool{}
+	// Add new multi-account specific tools
+	tools = append(tools, server.Tool{
+		Name:        "drive_files_list_all_accounts",
+		Description: "List files from all authenticated accounts",
+		InputSchema: server.InputSchema{
+			Type: "object",
+			Properties: map[string]server.Property{
+				"parent_id": {
+					Type:        "string",
+					Description: "Parent folder ID (optional, defaults to root)",
+				},
+				"page_size": {
+					Type:        "number",
+					Description: "Number of files per account (max 1000)",
+				},
+			},
+		},
+	})
+
+	return tools
 }
 
 // HandleToolCall handles a tool call for Drive service with multi-account support
@@ -331,8 +327,10 @@ func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, a
 	}
 
 	// Try to get client for the specified account
+	var accountErr error
 	if accountHint != "" || h.multiClient != nil {
 		client, accountUsed, err := h.multiClient.GetClientForContext(ctx, accountHint)
+		accountErr = err
 		if err == nil {
 			// Create a temporary handler with the selected client
 			tempHandler := NewHandler(client)
@@ -353,6 +351,11 @@ func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, a
 	// Fall back to original handler for backward compatibility
 	if h.handler != nil {
 		return h.handler.HandleToolCall(ctx, name, arguments)
+	}
+
+	// Without a default client, surface why no account could be selected
+	if accountErr != nil {
+		return nil, accountErr
 	}
 
 	return nil, fmt.Errorf("no handler available for tool: %s", name)
