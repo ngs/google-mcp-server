@@ -50,7 +50,9 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	defer cancel()
 
 	call := c.service.Files.List().
-		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink)")
+		Fields("files(id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, driveId)").
+		SupportsAllDrives(true).
+		IncludeItemsFromAllDrives(true)
 
 	// Build the query
 	finalQuery := query
@@ -93,8 +95,24 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	return fileList.Files, nil
 }
 
+const (
+	// searchPageSize is the number of results fetched for a plain search
+	searchPageSize = 100
+	// searchPageSizeWithFolderFilter is used when results are filtered
+	// client-side by folder, where a larger page reduces false negatives
+	searchPageSizeWithFolderFilter = 1000
+	// folderLookupTimeout bounds each parent lookup during ancestry walks
+	folderLookupTimeout = 10 * time.Second
+)
+
+// SearchOptions holds optional parameters for SearchFiles.
+type SearchOptions struct {
+	FullText string
+	FolderID string // If set, results are filtered client-side to files within this folder (recursive)
+}
+
 // SearchFiles searches for files
-func (c *Client) SearchFiles(name, mimeType string, modifiedAfter string) ([]*drive.File, error) {
+func (c *Client) SearchFiles(name, mimeType, modifiedAfter string, opts SearchOptions) ([]*drive.File, error) {
 	query := ""
 	if name != "" {
 		query = fmt.Sprintf("name contains '%s'", name)
@@ -111,14 +129,90 @@ func (c *Client) SearchFiles(name, mimeType string, modifiedAfter string) ([]*dr
 		}
 		query += fmt.Sprintf("modifiedTime > '%s'", modifiedAfter)
 	}
+	if opts.FullText != "" {
+		if query != "" {
+			query += " and "
+		}
+		query += fmt.Sprintf("fullText contains '%s'", opts.FullText)
+	}
 
-	return c.ListFiles(query, 100, "")
+	// Folder filtering happens client-side after a global search, so fetch a
+	// larger page to reduce the chance of matches falling outside the results.
+	pageSize := int64(searchPageSize)
+	if opts.FolderID != "" {
+		pageSize = searchPageSizeWithFolderFilter
+	}
+
+	files, err := c.ListFiles(query, pageSize, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.FolderID != "" {
+		cache := make(map[string]bool)
+		filtered := files[:0]
+		for _, f := range files {
+			if c.isDescendantOf(f.Parents, opts.FolderID, cache) {
+				filtered = append(filtered, f)
+			}
+		}
+		files = filtered
+	}
+
+	return files, nil
+}
+
+// getParents fetches only the parents of a folder, which is all the ancestry
+// walk needs. It avoids the much larger field set GetFile requests.
+func (c *Client) getParents(fileID string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), folderLookupTimeout)
+	defer cancel()
+
+	file, err := c.service.Files.Get(fileID).
+		Fields("parents").
+		SupportsAllDrives(true).
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parents of %s: %w", fileID, err)
+	}
+
+	return file.Parents, nil
+}
+
+// isDescendantOf checks whether a file (identified by its direct parents) is inside targetFolderID,
+// walking up the folder tree recursively. cache maps folder IDs to their result to avoid redundant API calls.
+func (c *Client) isDescendantOf(parents []string, targetFolderID string, cache map[string]bool) bool {
+	for _, parentID := range parents {
+		if parentID == targetFolderID {
+			return true
+		}
+		if cached, ok := cache[parentID]; ok {
+			if cached {
+				return true
+			}
+			continue
+		}
+		// Mark false first to handle any cycles
+		cache[parentID] = false
+		grandParents, err := c.getParents(parentID)
+		if err != nil || len(grandParents) == 0 {
+			continue
+		}
+		result := c.isDescendantOf(grandParents, targetFolderID, cache)
+		cache[parentID] = result
+		if result {
+			return true
+		}
+	}
+	return false
 }
 
 // GetFile gets file metadata
 func (c *Client) GetFile(fileID string) (*drive.File, error) {
 	file, err := c.service.Files.Get(fileID).
-		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions").
+		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, permissions, driveId").
+		SupportsAllDrives(true).
 		Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get file: %w", err)
@@ -128,7 +222,7 @@ func (c *Client) GetFile(fileID string) (*drive.File, error) {
 
 // DownloadFile downloads a file
 func (c *Client) DownloadFile(fileID string, writer io.Writer) error {
-	resp, err := c.service.Files.Get(fileID).Download()
+	resp, err := c.service.Files.Get(fileID).SupportsAllDrives(true).Download()
 	if err != nil {
 		return fmt.Errorf("failed to download file: %w", err)
 	}
@@ -153,7 +247,7 @@ func (c *Client) UploadFile(name string, mimeType string, reader io.Reader, pare
 		file.Parents = []string{parentID}
 	}
 
-	call := c.service.Files.Create(file)
+	call := c.service.Files.Create(file).SupportsAllDrives(true)
 	if reader != nil {
 		call = call.Media(reader)
 	}
@@ -176,7 +270,7 @@ func (c *Client) UpdateFileMetadata(fileID, name, description string) (*drive.Fi
 		file.Description = description
 	}
 
-	updated, err := c.service.Files.Update(fileID, file).Do()
+	updated, err := c.service.Files.Update(fileID, file).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to update file metadata: %w", err)
 	}
@@ -195,7 +289,7 @@ func (c *Client) CreateFolder(name string, parentID string) (*drive.File, error)
 		folder.Parents = []string{parentID}
 	}
 
-	created, err := c.service.Files.Create(folder).Do()
+	created, err := c.service.Files.Create(folder).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create folder: %w", err)
 	}
@@ -221,6 +315,7 @@ func (c *Client) MoveFile(fileID, newParentID string) (*drive.File, error) {
 		AddParents(newParentID).
 		RemoveParents(removeParents).
 		Fields("id, parents").
+		SupportsAllDrives(true).
 		Do()
 
 	if err != nil {
@@ -237,7 +332,7 @@ func (c *Client) CopyFile(fileID, newName string) (*drive.File, error) {
 		copy.Name = newName
 	}
 
-	copied, err := c.service.Files.Copy(fileID, copy).Do()
+	copied, err := c.service.Files.Copy(fileID, copy).SupportsAllDrives(true).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to copy file: %w", err)
 	}
@@ -247,7 +342,7 @@ func (c *Client) CopyFile(fileID, newName string) (*drive.File, error) {
 
 // DeleteFile deletes a file
 func (c *Client) DeleteFile(fileID string) error {
-	err := c.service.Files.Delete(fileID).Do()
+	err := c.service.Files.Delete(fileID).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to delete file: %w", err)
 	}
@@ -256,7 +351,7 @@ func (c *Client) DeleteFile(fileID string) error {
 
 // TrashFile moves a file to trash
 func (c *Client) TrashFile(fileID string) error {
-	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: true}).Do()
+	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: true}).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to trash file: %w", err)
 	}
@@ -265,7 +360,7 @@ func (c *Client) TrashFile(fileID string) error {
 
 // RestoreFile restores a file from trash
 func (c *Client) RestoreFile(fileID string) error {
-	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: false}).Do()
+	_, err := c.service.Files.Update(fileID, &drive.File{Trashed: false}).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to restore file: %w", err)
 	}
@@ -279,7 +374,7 @@ func (c *Client) CreateShareLink(fileID string, role string) (string, error) {
 		Role: role, // "reader", "writer", etc.
 	}
 
-	_, err := c.service.Permissions.Create(fileID, permission).Do()
+	_, err := c.service.Permissions.Create(fileID, permission).SupportsAllDrives(true).Do()
 	if err != nil {
 		return "", fmt.Errorf("failed to create share link: %w", err)
 	}
@@ -296,6 +391,7 @@ func (c *Client) CreateShareLink(fileID string, role string) (string, error) {
 func (c *Client) ListPermissions(fileID string) ([]*drive.Permission, error) {
 	permissions, err := c.service.Permissions.List(fileID).
 		Fields("permissions(id, type, role, emailAddress)").
+		SupportsAllDrives(true).
 		Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list permissions: %w", err)
@@ -314,6 +410,7 @@ func (c *Client) CreatePermission(fileID, email, role string) (*drive.Permission
 
 	created, err := c.service.Permissions.Create(fileID, permission).
 		SendNotificationEmail(true).
+		SupportsAllDrives(true).
 		Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create permission: %w", err)
@@ -324,7 +421,7 @@ func (c *Client) CreatePermission(fileID, email, role string) (*drive.Permission
 
 // DeletePermission deletes a permission
 func (c *Client) DeletePermission(fileID, permissionID string) error {
-	err := c.service.Permissions.Delete(fileID, permissionID).Do()
+	err := c.service.Permissions.Delete(fileID, permissionID).SupportsAllDrives(true).Do()
 	if err != nil {
 		return fmt.Errorf("failed to delete permission: %w", err)
 	}
@@ -490,6 +587,7 @@ func (c *Client) UploadMarkdownAsDoc(ctx context.Context, name, markdown, parent
 	driveFile, err := c.service.Files.Create(file).
 		Media(reader).
 		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink, createdTime").
+		SupportsAllDrives(true).
 		Context(ctx).
 		Do()
 
@@ -505,6 +603,7 @@ func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown st
 	// First, get the file metadata to ensure it's a Google Doc
 	file, err := c.service.Files.Get(fileID).
 		Fields("id, name, mimeType").
+		SupportsAllDrives(true).
 		Context(ctx).
 		Do()
 	if err != nil {
@@ -527,6 +626,7 @@ func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown st
 	updatedFile, err := c.service.Files.Update(fileID, &drive.File{}).
 		Media(reader).
 		Fields("id, name, mimeType, size, modifiedTime, parents, webViewLink, iconLink, thumbnailLink").
+		SupportsAllDrives(true).
 		Context(ctx).
 		Do()
 

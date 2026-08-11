@@ -20,6 +20,12 @@ func NewHandler(client *Client) *Handler {
 
 // GetTools returns the available Sheets tools
 func (h *Handler) GetTools() []server.Tool {
+	return defaultSheetsTools()
+}
+
+// defaultSheetsTools returns the Sheets tool definitions. It is shared by
+// Handler and MultiAccountHandler so the definitions are not maintained twice.
+func defaultSheetsTools() []server.Tool {
 	return []server.Tool{
 		{
 			Name:        "sheets_spreadsheet_get",
