@@ -95,6 +95,16 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	return fileList.Files, nil
 }
 
+const (
+	// searchPageSize is the number of results fetched for a plain search
+	searchPageSize = 100
+	// searchPageSizeWithFolderFilter is used when results are filtered
+	// client-side by folder, where a larger page reduces false negatives
+	searchPageSizeWithFolderFilter = 1000
+	// folderLookupTimeout bounds each parent lookup during ancestry walks
+	folderLookupTimeout = 10 * time.Second
+)
+
 // SearchOptions holds optional parameters for SearchFiles.
 type SearchOptions struct {
 	FullText string
@@ -126,7 +136,14 @@ func (c *Client) SearchFiles(name, mimeType, modifiedAfter string, opts SearchOp
 		query += fmt.Sprintf("fullText contains '%s'", opts.FullText)
 	}
 
-	files, err := c.ListFiles(query, 100, "")
+	// Folder filtering happens client-side after a global search, so fetch a
+	// larger page to reduce the chance of matches falling outside the results.
+	pageSize := int64(searchPageSize)
+	if opts.FolderID != "" {
+		pageSize = searchPageSizeWithFolderFilter
+	}
+
+	files, err := c.ListFiles(query, pageSize, "")
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +162,24 @@ func (c *Client) SearchFiles(name, mimeType, modifiedAfter string, opts SearchOp
 	return files, nil
 }
 
+// getParents fetches only the parents of a folder, which is all the ancestry
+// walk needs. It avoids the much larger field set GetFile requests.
+func (c *Client) getParents(fileID string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), folderLookupTimeout)
+	defer cancel()
+
+	file, err := c.service.Files.Get(fileID).
+		Fields("parents").
+		SupportsAllDrives(true).
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get parents of %s: %w", fileID, err)
+	}
+
+	return file.Parents, nil
+}
+
 // isDescendantOf checks whether a file (identified by its direct parents) is inside targetFolderID,
 // walking up the folder tree recursively. cache maps folder IDs to their result to avoid redundant API calls.
 func (c *Client) isDescendantOf(parents []string, targetFolderID string, cache map[string]bool) bool {
@@ -160,11 +195,11 @@ func (c *Client) isDescendantOf(parents []string, targetFolderID string, cache m
 		}
 		// Mark false first to handle any cycles
 		cache[parentID] = false
-		parent, err := c.GetFile(parentID)
-		if err != nil || len(parent.Parents) == 0 {
+		grandParents, err := c.getParents(parentID)
+		if err != nil || len(grandParents) == 0 {
 			continue
 		}
-		result := c.isDescendantOf(parent.Parents, targetFolderID, cache)
+		result := c.isDescendantOf(grandParents, targetFolderID, cache)
 		cache[parentID] = result
 		if result {
 			return true

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -31,7 +32,7 @@ func NewMultiAccountClient(ctx context.Context, accountManager *auth.AccountMana
 	for email, oauthClient := range accountManager.GetAllOAuthClients() {
 		service, err := sheets.NewService(ctx, option.WithHTTPClient(oauthClient.GetHTTPClient()))
 		if err != nil {
-			fmt.Printf("Warning: failed to create sheets service for %s: %v\n", email, err)
+			log.Printf("[WARNING] Failed to create sheets service for %s: %v\n", email, err)
 			continue
 		}
 		mac.clients[email] = &Client{service: service}
@@ -59,8 +60,14 @@ func (mac *MultiAccountClient) GetClientForContext(ctx context.Context, hint str
 			return nil, "", fmt.Errorf("failed to create sheets service: %w", err)
 		}
 
-		newClient := &Client{service: service}
 		mac.mu.Lock()
+		// Another goroutine may have created the client while we were building
+		// ours, so re-check under the write lock and keep the existing one.
+		if existing, ok := mac.clients[account.Email]; ok {
+			mac.mu.Unlock()
+			return existing, account.Email, nil
+		}
+		newClient := &Client{service: service}
 		mac.clients[account.Email] = newClient
 		mac.mu.Unlock()
 
@@ -105,7 +112,7 @@ func NewMultiAccountHandler(accountManager *auth.AccountManager, defaultClient *
 	multiClient, err := NewMultiAccountClient(ctx, accountManager)
 	if err != nil {
 		// Log error but continue with limited functionality
-		fmt.Printf("Warning: failed to initialize multi-account sheets client: %v\n", err)
+		log.Printf("[WARNING] Failed to initialize multi-account sheets client: %v\n", err)
 		multiClient = &MultiAccountClient{
 			accountManager: accountManager,
 			clients:        make(map[string]*Client),
@@ -158,8 +165,10 @@ func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, a
 	}
 
 	// Try to get client for the specified account (or the sole account)
+	var accountErr error
 	if h.multiClient != nil {
 		client, accountUsed, err := h.multiClient.GetClientForContext(ctx, accountHint)
+		accountErr = err
 		if err == nil {
 			// Create a temporary handler with the selected client
 			tempHandler := NewHandler(client)
@@ -180,6 +189,11 @@ func (h *MultiAccountHandler) HandleToolCall(ctx context.Context, name string, a
 	// Fall back to original handler for backward compatibility
 	if h.handler != nil {
 		return h.handler.HandleToolCall(ctx, name, arguments)
+	}
+
+	// Without a default client, surface why no account could be selected
+	if accountErr != nil {
+		return nil, accountErr
 	}
 
 	return nil, fmt.Errorf("no handler available for tool: %s", name)
