@@ -65,6 +65,14 @@ func defaultDriveTools() []server.Tool {
 						Type:        "string",
 						Description: "Modified after date (RFC3339 format)",
 					},
+					"full_text": {
+						Type:        "string",
+						Description: "Full-text search query (searches file contents)",
+					},
+					"folder_id": {
+						Type:        "string",
+						Description: "Restrict results to files inside this folder (recursive); filtering is done client-side after a global fullText search",
+					},
 				},
 			},
 		},
@@ -375,11 +383,13 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			Name          string `json:"name"`
 			MimeType      string `json:"mime_type"`
 			ModifiedAfter string `json:"modified_after"`
+			FullText      string `json:"full_text"`
+			FolderID      string `json:"folder_id"`
 		}
 		if err := json.Unmarshal(arguments, &args); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
-		return h.handleFilesSearch(ctx, args.Name, args.MimeType, args.ModifiedAfter)
+		return h.handleFilesSearch(ctx, args.Name, args.MimeType, args.ModifiedAfter, args.FullText, args.FolderID)
 
 	case "drive_file_download":
 		var args struct {
@@ -561,8 +571,8 @@ func (h *Handler) handleFilesList(ctx context.Context, parentID string, pageSize
 	}, nil
 }
 
-func (h *Handler) handleFilesSearch(ctx context.Context, name, mimeType, modifiedAfter string) (interface{}, error) {
-	files, err := h.client.SearchFiles(name, mimeType, modifiedAfter)
+func (h *Handler) handleFilesSearch(ctx context.Context, name, mimeType, modifiedAfter, fullText, folderID string) (interface{}, error) {
+	files, err := h.client.SearchFiles(name, mimeType, modifiedAfter, SearchOptions{FullText: fullText, FolderID: folderID})
 	if err != nil {
 		return nil, err
 	}

@@ -564,6 +564,108 @@ func TestConvertMarkdownToHTML_Styles(t *testing.T) {
 	}
 }
 
+// captureTransport records the last request URL for query inspection.
+type captureTransport struct {
+	lastRequest *http.Request
+}
+
+func (t *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.lastRequest = req
+	body := `{"files": []}`
+	return &http.Response{
+		StatusCode: 200,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
+}
+
+func newClientWithCapture(t *testing.T) (*Client, *captureTransport) {
+	t.Helper()
+	ct := &captureTransport{}
+	httpClient := &http.Client{Transport: ct}
+	service, err := drive.NewService(context.Background(), option.WithHTTPClient(httpClient))
+	if err != nil {
+		t.Fatalf("Failed to create Drive service: %v", err)
+	}
+	return &Client{service: service}, ct
+}
+
+func TestSearchFiles_FullText(t *testing.T) {
+	client, ct := newClientWithCapture(t)
+
+	_, err := client.SearchFiles("", "", "", SearchOptions{FullText: "buttercup"})
+	if err != nil {
+		t.Fatalf("SearchFiles() error = %v", err)
+	}
+
+	q := ct.lastRequest.URL.Query().Get("q")
+	if !strings.Contains(q, "fullText contains 'buttercup'") {
+		t.Errorf("expected q to contain fullText clause, got: %q", q)
+	}
+}
+
+func TestSearchFiles_FolderID_NotInQuery(t *testing.T) {
+	client, ct := newClientWithCapture(t)
+
+	_, err := client.SearchFiles("", "", "", SearchOptions{FullText: "buttercup", FolderID: "folder123"})
+	if err != nil {
+		t.Fatalf("SearchFiles() error = %v", err)
+	}
+
+	q := ct.lastRequest.URL.Query().Get("q")
+	if !strings.Contains(q, "fullText contains 'buttercup'") {
+		t.Errorf("expected q to contain fullText clause, got: %q", q)
+	}
+	// FolderID filtering is client-side; folder ID must NOT appear in the Drive API query
+	if strings.Contains(q, "folder123") {
+		t.Errorf("folder ID should be absent from API query (filtering is client-side), got: %q", q)
+	}
+}
+
+func TestSearchFiles_AllParams(t *testing.T) {
+	client, ct := newClientWithCapture(t)
+
+	_, err := client.SearchFiles("budget", "text/markdown", "2025-01-01T00:00:00Z", SearchOptions{FullText: "tax", FolderID: "folder789"})
+	if err != nil {
+		t.Fatalf("SearchFiles() error = %v", err)
+	}
+
+	q := ct.lastRequest.URL.Query().Get("q")
+	for _, want := range []string{
+		"name contains 'budget'",
+		"mimeType = 'text/markdown'",
+		"modifiedTime > '2025-01-01T00:00:00Z'",
+		"fullText contains 'tax'",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("expected q to contain %q, got: %q", want, q)
+		}
+	}
+	if strings.Contains(q, "folder789") {
+		t.Errorf("folder ID should be absent from API query (filtering is client-side), got: %q", q)
+	}
+}
+
+func TestSearchFiles_NoOpts_BackwardCompat(t *testing.T) {
+	client, ct := newClientWithCapture(t)
+
+	_, err := client.SearchFiles("report", "", "", SearchOptions{})
+	if err != nil {
+		t.Fatalf("SearchFiles() error = %v", err)
+	}
+
+	q := ct.lastRequest.URL.Query().Get("q")
+	if !strings.Contains(q, "name contains 'report'") {
+		t.Errorf("expected q to contain name clause, got: %q", q)
+	}
+	if strings.Contains(q, "fullText") {
+		t.Errorf("expected no fullText clause when FullText is empty, got: %q", q)
+	}
+	if strings.Contains(q, "in parents") {
+		t.Errorf("expected no parent clause when FolderID is empty, got: %q", q)
+	}
+}
+
 func BenchmarkConvertMarkdownToHTML(b *testing.B) {
 	markdown := `# Benchmark Document
 

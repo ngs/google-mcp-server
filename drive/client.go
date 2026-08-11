@@ -95,8 +95,14 @@ func (c *Client) ListFiles(query string, pageSize int64, parentID string) ([]*dr
 	return fileList.Files, nil
 }
 
+// SearchOptions holds optional parameters for SearchFiles.
+type SearchOptions struct {
+	FullText string
+	FolderID string // If set, results are filtered client-side to files within this folder (recursive)
+}
+
 // SearchFiles searches for files
-func (c *Client) SearchFiles(name, mimeType string, modifiedAfter string) ([]*drive.File, error) {
+func (c *Client) SearchFiles(name, mimeType, modifiedAfter string, opts SearchOptions) ([]*drive.File, error) {
 	query := ""
 	if name != "" {
 		query = fmt.Sprintf("name contains '%s'", name)
@@ -113,8 +119,58 @@ func (c *Client) SearchFiles(name, mimeType string, modifiedAfter string) ([]*dr
 		}
 		query += fmt.Sprintf("modifiedTime > '%s'", modifiedAfter)
 	}
+	if opts.FullText != "" {
+		if query != "" {
+			query += " and "
+		}
+		query += fmt.Sprintf("fullText contains '%s'", opts.FullText)
+	}
 
-	return c.ListFiles(query, 100, "")
+	files, err := c.ListFiles(query, 100, "")
+	if err != nil {
+		return nil, err
+	}
+
+	if opts.FolderID != "" {
+		cache := make(map[string]bool)
+		filtered := files[:0]
+		for _, f := range files {
+			if c.isDescendantOf(f.Parents, opts.FolderID, cache) {
+				filtered = append(filtered, f)
+			}
+		}
+		files = filtered
+	}
+
+	return files, nil
+}
+
+// isDescendantOf checks whether a file (identified by its direct parents) is inside targetFolderID,
+// walking up the folder tree recursively. cache maps folder IDs to their result to avoid redundant API calls.
+func (c *Client) isDescendantOf(parents []string, targetFolderID string, cache map[string]bool) bool {
+	for _, parentID := range parents {
+		if parentID == targetFolderID {
+			return true
+		}
+		if cached, ok := cache[parentID]; ok {
+			if cached {
+				return true
+			}
+			continue
+		}
+		// Mark false first to handle any cycles
+		cache[parentID] = false
+		parent, err := c.GetFile(parentID)
+		if err != nil || len(parent.Parents) == 0 {
+			continue
+		}
+		result := c.isDescendantOf(parent.Parents, targetFolderID, cache)
+		cache[parentID] = result
+		if result {
+			return true
+		}
+	}
+	return false
 }
 
 // GetFile gets file metadata
