@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -31,7 +32,7 @@ func NewMultiAccountClient(ctx context.Context, accountManager *auth.AccountMana
 	for email, oauthClient := range accountManager.GetAllOAuthClients() {
 		service, err := drive.NewService(ctx, option.WithHTTPClient(oauthClient.GetHTTPClient()))
 		if err != nil {
-			fmt.Printf("Warning: failed to create drive service for %s: %v\n", email, err)
+			log.Printf("[WARNING] Failed to create drive service for %s: %v\n", email, err)
 			continue
 		}
 		mac.clients[email] = &Client{service: service}
@@ -193,7 +194,7 @@ func NewMultiAccountHandler(accountManager *auth.AccountManager, defaultClient *
 	multiClient, err := NewMultiAccountClient(ctx, accountManager)
 	if err != nil {
 		// Log error but continue with limited functionality
-		fmt.Printf("Warning: failed to initialize multi-account client: %v\n", err)
+		log.Printf("[WARNING] Failed to initialize multi-account client: %v\n", err)
 		multiClient = &MultiAccountClient{
 			accountManager: accountManager,
 			clients:        make(map[string]*Client),
