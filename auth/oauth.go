@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -183,12 +184,12 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 	}
 	defer func() { _ = listener.Close() }()
 
-	fmt.Printf("Opening browser for authentication...\n")
-	fmt.Printf("If browser doesn't open, visit this URL:\n%s\n", authURL)
+	log.Printf("Opening browser for authentication...\n")
+	log.Printf("If browser doesn't open, visit this URL:\n%s\n", authURL)
 
 	// Open browser
 	if err := browser.OpenURL(authURL); err != nil {
-		fmt.Printf("Failed to open browser: %v\n", err)
+		log.Printf("Failed to open browser: %v\n", err)
 	}
 
 	// Start local server to handle callback
@@ -234,7 +235,7 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 
 	// Shut down the server
 	if err := server.Shutdown(ctx); err != nil {
-		fmt.Printf("Warning: failed to shutdown callback server: %v\n", err)
+		log.Printf("[WARNING] Failed to shutdown callback server: %v\n", err)
 	}
 
 	// Exchange authorization code for token
@@ -250,10 +251,10 @@ func (c *OAuthClient) authenticate(ctx context.Context) error {
 
 	// Save token for future use
 	if err := c.saveToken(); err != nil {
-		fmt.Printf("Warning: failed to save token: %v\n", err)
+		log.Printf("[WARNING] Failed to save token: %v\n", err)
 	}
 
-	fmt.Println("Authentication successful!")
+	log.Println("Authentication successful!")
 	return nil
 }
 
@@ -358,7 +359,7 @@ func (c *OAuthClient) refreshToken(ctx context.Context) {
 	tokenSource := c.config.TokenSource(ctx, currentToken)
 	newToken, err := tokenSource.Token()
 	if err != nil {
-		fmt.Printf("Warning: failed to refresh token: %v\n", err)
+		log.Printf("[WARNING] Failed to refresh token: %v\n", err)
 		return
 	}
 
@@ -368,7 +369,7 @@ func (c *OAuthClient) refreshToken(ctx context.Context) {
 
 	// Save the new token
 	if err := c.saveToken(); err != nil {
-		fmt.Printf("Warning: failed to save refreshed token: %v\n", err)
+		log.Printf("[WARNING] Failed to save refreshed token: %v\n", err)
 	}
 
 	c.mu.Lock()

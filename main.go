@@ -20,14 +20,22 @@ import (
 	"go.ngs.io/google-mcp-server/slides"
 )
 
+// versionString is what --version prints. It is derived from server.VERSION so
+// the two cannot drift apart.
+func versionString() string {
+	return "google-mcp-server v" + server.VERSION
+}
+
 func main() {
 	// Set up logging immediately with no buffering
 	log.SetOutput(os.Stderr)
 	log.SetFlags(0) // Remove flags for cleaner MCP output
 
-	// Check for version flag
+	// Check for version flag. This is the one intentional write to stdout: it
+	// happens before the JSON-RPC stream starts and the process exits straight
+	// after, so it cannot interleave with protocol messages.
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
-		fmt.Println("google-mcp-server v0.1.0")
+		fmt.Fprintln(os.Stdout, versionString())
 		os.Exit(0)
 	}
 

@@ -2,6 +2,7 @@ package slides
 
 import (
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"unicode/utf16"
@@ -326,7 +327,7 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		_, err := mc.client.DeleteSlide(mc.presentationId, firstSlideId)
 		if err != nil {
 			// Log error but continue
-			fmt.Printf("Warning: failed to delete first slide: %v\n", err)
+			log.Printf("[WARNING] Failed to delete first slide: %v\n", err)
 		}
 	}
 
@@ -334,7 +335,7 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 	layoutId, err := mc.client.GetLayoutId(mc.presentationId, "TITLE_AND_BODY")
 	if err != nil {
 		// Fallback to blank slides if layout not found
-		fmt.Printf("Warning: failed to get TITLE_AND_BODY layout: %v\n", err)
+		log.Printf("[WARNING] Failed to get TITLE_AND_BODY layout: %v\n", err)
 		layoutId = ""
 	}
 
@@ -897,7 +898,7 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 									)
 									if err != nil {
 										// Log error but continue with other cells
-										fmt.Printf("Warning: failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
+										log.Printf("[WARNING] Failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
 									}
 								}
 							}
@@ -1090,7 +1091,7 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 									)
 									if err != nil {
 										// Log error but continue with other cells
-										fmt.Printf("Warning: failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
+										log.Printf("[WARNING] Failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
 									}
 								}
 							}
