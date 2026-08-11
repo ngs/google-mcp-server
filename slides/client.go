@@ -895,8 +895,8 @@ func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) 
 
 	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
 		return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+			return c.service.Presentations.BatchUpdate(presentationId, req).Do()
+		})
 	})
 }
 
