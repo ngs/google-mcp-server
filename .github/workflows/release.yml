@@ -9,8 +9,48 @@ permissions:
   contents: write
 
 jobs:
+  # v0.4.0 was tagged while server/version.go still said 0.3.0, so the release
+  # shipped reporting the wrong version to every MCP client via serverInfo.
+  # Nothing is published until the tag and the constant agree.
+  verify-version:
+    name: Verify version matches tag
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check server/version.go against the pushed tag
+      run: |
+        tag="${GITHUB_REF_NAME#v}"
+        version=$(sed -n 's/^const VERSION = "\(.*\)"$/\1/p' server/version.go)
+        if [ -z "$version" ]; then
+          echo "::error::Could not read VERSION from server/version.go"
+          exit 1
+        fi
+        if [ "$tag" = "$version" ]; then
+          echo "server/version.go VERSION ($version) matches tag ${GITHUB_REF_NAME}"
+          exit 0
+        fi
+        echo "::error::server/version.go VERSION is ${version} but the tag is ${GITHUB_REF_NAME}"
+        echo "Run 'make set-version VERSION=${GITHUB_REF_NAME}' on master, then re-tag."
+        exit 1
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: '.go-version'
+        cache: true
+
+    # The comparison above only proves the tag and the constant agree, so a
+    # matching but malformed pair (tag v01.2.3 with VERSION "01.2.3") would pass
+    # it. The shape check has to run here rather than only in the release job,
+    # because build-binaries and publish-binaries do not depend on that job and
+    # would otherwise publish assets regardless.
+    - name: Check the version constant is well formed
+      run: go test ./server/ -run 'TestVersionIsWellFormed|TestIsNumericIdentifier' -v
+
   release:
     name: Release
+    needs: verify-version
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -38,6 +78,7 @@ jobs:
 
   build-binaries:
     name: Build Binaries
+    needs: verify-version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
