@@ -15,6 +15,10 @@ type Client struct {
 
 // NewClient creates a new Sheets client
 func NewClient(ctx context.Context, oauth *auth.OAuthClient) (*Client, error) {
+	if oauth == nil {
+		return nil, fmt.Errorf("no OAuth client available")
+	}
+
 	service, err := sheets.NewService(ctx, oauth.GetClientOption())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create sheets service: %w", err)

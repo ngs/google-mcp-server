@@ -80,6 +80,18 @@ func TestNewOAuthClientWithoutAuth(t *testing.T) {
 	}
 }
 
+func TestNilOAuthClientAccessors(t *testing.T) {
+	var client *OAuthClient
+
+	if httpClient := client.GetHTTPClient(); httpClient != nil {
+		t.Errorf("Expected nil HTTP client from nil receiver, got %v", httpClient)
+	}
+
+	if opt := client.GetClientOption(); opt == nil {
+		t.Error("Expected a client option from nil receiver, got nil")
+	}
+}
+
 func TestTokenFilePath(t *testing.T) {
 	tempDir := t.TempDir()
 	tokenFile := filepath.Join(tempDir, "test-token.json")

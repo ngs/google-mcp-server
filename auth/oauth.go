@@ -106,6 +106,9 @@ func DefaultScopes() []string {
 
 // GetHTTPClient returns the authenticated HTTP client
 func (c *OAuthClient) GetHTTPClient() *http.Client {
+	if c == nil {
+		return nil
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.httpClient

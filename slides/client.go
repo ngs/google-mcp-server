@@ -75,6 +75,10 @@ type Client struct {
 }
 
 func NewClient(ctx context.Context, client *http.Client) (*Client, error) {
+	if client == nil {
+		return nil, fmt.Errorf("no authenticated HTTP client available")
+	}
+
 	service, err := slides.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create slides service: %w", err)
