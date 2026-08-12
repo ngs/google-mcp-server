@@ -3,7 +3,9 @@ package slides
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,13 +15,85 @@ import (
 	"google.golang.org/api/slides/v1"
 )
 
+// fakeLayout describes one of the layouts the fake presentation offers,
+// including the placeholders that layout produces. Slides created from a layout
+// may only map the placeholders it actually defines, which is what forces the
+// converter to read them from the layout rather than guess.
+type fakeLayout struct {
+	objectId     string
+	name         string
+	placeholders []fakePlaceholder
+}
+
+type fakePlaceholder struct {
+	objectId string
+	kind     string
+}
+
+var fakeLayouts = []fakeLayout{
+	{objectId: "layout-title-body", name: "TITLE_AND_BODY", placeholders: []fakePlaceholder{
+		{objectId: "layout-title-body-title", kind: "TITLE"},
+		{objectId: "layout-title-body-body", kind: "BODY"},
+	}},
+	{objectId: "layout-title", name: "TITLE", placeholders: []fakePlaceholder{
+		// Themes differ here; CENTERED_TITLE + SUBTITLE is the common shape.
+		{objectId: "layout-title-title", kind: "CENTERED_TITLE"},
+		{objectId: "layout-title-sub", kind: "SUBTITLE"},
+	}},
+	{objectId: "layout-title-only", name: "TITLE_ONLY", placeholders: []fakePlaceholder{
+		{objectId: "layout-title-only-title", kind: "TITLE"},
+	}},
+}
+
+func layoutPages() []*slides.Page {
+	pages := make([]*slides.Page, 0, len(fakeLayouts))
+	for _, layout := range fakeLayouts {
+		elements := make([]*slides.PageElement, 0, len(layout.placeholders))
+		for _, ph := range layout.placeholders {
+			elements = append(elements, &slides.PageElement{
+				ObjectId: ph.objectId,
+				Shape:    &slides.Shape{Placeholder: &slides.Placeholder{Type: ph.kind}},
+			})
+		}
+		pages = append(pages, &slides.Page{
+			ObjectId:         layout.objectId,
+			LayoutProperties: &slides.LayoutProperties{Name: layout.name},
+			PageElements:     elements,
+		})
+	}
+	return pages
+}
+
+func findFakeLayout(objectId string) (fakeLayout, bool) {
+	for _, layout := range fakeLayouts {
+		if layout.objectId == objectId {
+			return layout, true
+		}
+	}
+	return fakeLayout{}, false
+}
+
+// textStyling records an UpdateTextStyle the fake accepted.
+type textStyling struct {
+	objectId   string
+	fontFamily string
+}
+
 // fakeSlidesAPI is a minimal stand-in for the two Slides endpoints this package
 // uses: presentations.get and presentations.batchUpdate. It keeps enough state
 // that a deck can actually be built against it, and records the order of the
 // requests so tests can assert on sequencing.
 type fakeSlidesAPI struct {
-	slides     []*slides.Page // current deck, in order
-	requests   []string       // request kinds in the order they were issued
+	slides   []*slides.Page // current deck, in order
+	requests []string       // request kinds in the order they were issued
+	batches  int            // batchUpdate calls, successful or not
+	// text holds what landed in each shape, keyed by object ID and, for table
+	// cells, by "tableId[row,col]".
+	text map[string]string
+	// objectIds are the IDs the caller assigned, in the order they were used
+	objectIds  []string
+	tableIds   []string
+	styled     []textStyling
 	nextID     int
 	failCreate bool // fail any batch containing a createSlide
 	// failCreateAfter, when non-zero, lets that many slides be created before
@@ -40,11 +114,7 @@ func (f *fakeSlidesAPI) handleGet() (*http.Response, error) {
 	return jsonResponse(http.StatusOK, &slides.Presentation{
 		PresentationId: "test-presentation",
 		Slides:         f.slides,
-		Layouts: []*slides.Page{
-			{ObjectId: "layout-title-body", LayoutProperties: &slides.LayoutProperties{Name: "TITLE_AND_BODY"}},
-			{ObjectId: "layout-title", LayoutProperties: &slides.LayoutProperties{Name: "TITLE"}},
-			{ObjectId: "layout-title-only", LayoutProperties: &slides.LayoutProperties{Name: "TITLE_ONLY"}},
-		},
+		Layouts:        layoutPages(),
 	})
 }
 
@@ -59,30 +129,88 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 		return nil, err
 	}
 
+	f.batches++
+
+	// batchUpdate is atomic: a batch that fails partway leaves nothing behind,
+	// so the fake has to undo whatever this batch had already applied.
+	slidesBefore := append([]*slides.Page(nil), f.slides...)
+	textBefore := maps.Clone(f.text)
+	objectIdsBefore := append([]string(nil), f.objectIds...)
+	tableIdsBefore := append([]string(nil), f.tableIds...)
+	styledBefore := append([]textStyling(nil), f.styled...)
+	fail := func(status int, message string) (*http.Response, error) {
+		f.slides = slidesBefore
+		f.text = textBefore
+		f.objectIds = objectIdsBefore
+		f.tableIds = tableIdsBefore
+		f.styled = styledBefore
+		return jsonResponse(status,
+			map[string]any{"error": map[string]any{"code": status, "message": message}})
+	}
+
 	replies := make([]*slides.Response, 0, len(parsed.Requests))
 	for _, r := range parsed.Requests {
 		switch {
 		case r.CreateSlide != nil:
 			f.requests = append(f.requests, "createSlide")
 			if f.failCreateAfter > 0 && f.count("createSlide") > f.failCreateAfter {
-				return jsonResponse(http.StatusInternalServerError,
-					map[string]any{"error": map[string]any{"code": 500, "message": "boom"}})
+				return fail(http.StatusInternalServerError, "boom")
 			}
 			if f.failCreate {
-				return jsonResponse(http.StatusInternalServerError,
-					map[string]any{"error": map[string]any{"code": 500, "message": "boom"}})
+				return fail(http.StatusInternalServerError, "boom")
 			}
-			replies = append(replies, &slides.Response{CreateSlide: &slides.CreateSlideResponse{
-				ObjectId: f.addSlide(),
-			}})
+			id, err := f.addSlideFromRequest(r.CreateSlide)
+			if err != nil {
+				return fail(http.StatusBadRequest, err.Error())
+			}
+			replies = append(replies, &slides.Response{CreateSlide: &slides.CreateSlideResponse{ObjectId: id}})
 
 		case r.DeleteObject != nil:
 			f.requests = append(f.requests, "deleteObject")
 			f.removeSlide(r.DeleteObject.ObjectId)
 			replies = append(replies, &slides.Response{})
 
+		case r.CreateTable != nil:
+			f.requests = append(f.requests, "createTable")
+			f.recordObjectId(r.CreateTable.ObjectId)
+			f.tableIds = append(f.tableIds, r.CreateTable.ObjectId)
+			replies = append(replies, &slides.Response{CreateTable: &slides.CreateTableResponse{
+				ObjectId: r.CreateTable.ObjectId,
+			}})
+
+		case r.CreateImage != nil:
+			f.requests = append(f.requests, "createImage")
+			f.recordObjectId(r.CreateImage.ObjectId)
+			replies = append(replies, &slides.Response{CreateImage: &slides.CreateImageResponse{
+				ObjectId: r.CreateImage.ObjectId,
+			}})
+
+		case r.CreateShape != nil:
+			f.requests = append(f.requests, "createShape")
+			f.recordObjectId(r.CreateShape.ObjectId)
+			replies = append(replies, &slides.Response{CreateShape: &slides.CreateShapeResponse{
+				ObjectId: r.CreateShape.ObjectId,
+			}})
+
+		case r.InsertText != nil:
+			f.requests = append(f.requests, "insertText")
+			f.recordText(r.InsertText)
+			replies = append(replies, &slides.Response{})
+
+		case r.DeleteText != nil:
+			f.requests = append(f.requests, "deleteText")
+			replies = append(replies, &slides.Response{})
+
+		case r.UpdateTextStyle != nil:
+			f.requests = append(f.requests, "updateTextStyle")
+			styling := textStyling{objectId: r.UpdateTextStyle.ObjectId}
+			if r.UpdateTextStyle.Style != nil {
+				styling.fontFamily = r.UpdateTextStyle.Style.FontFamily
+			}
+			f.styled = append(f.styled, styling)
+			replies = append(replies, &slides.Response{})
+
 		default:
-			// insertText, deleteText, formatting and so on: accepted as-is
 			f.requests = append(f.requests, "other")
 			replies = append(replies, &slides.Response{})
 		}
@@ -91,9 +219,79 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 	return jsonResponse(http.StatusOK, &slides.BatchUpdatePresentationResponse{Replies: replies})
 }
 
-// addSlide appends a slide carrying the title and body placeholders the
-// populate step looks for, and returns its ID.
-func (f *fakeSlidesAPI) addSlide() string {
+func (f *fakeSlidesAPI) recordObjectId(id string) {
+	if id != "" {
+		f.objectIds = append(f.objectIds, id)
+	}
+}
+
+func (f *fakeSlidesAPI) recordText(req *slides.InsertTextRequest) {
+	if f.text == nil {
+		f.text = map[string]string{}
+	}
+	key := req.ObjectId
+	if req.CellLocation != nil {
+		key = fmt.Sprintf("%s[%d,%d]", req.ObjectId, req.CellLocation.RowIndex, req.CellLocation.ColumnIndex)
+	}
+	f.text[key] = req.Text
+}
+
+// addSlideFromRequest honours the caller-supplied object ID and placeholder
+// mappings, rejecting a mapping the layout does not define exactly as the real
+// API does.
+func (f *fakeSlidesAPI) addSlideFromRequest(req *slides.CreateSlideRequest) (string, error) {
+	id := req.ObjectId
+	if id == "" {
+		f.nextID++
+		id = "slide-" + strconv.Itoa(f.nextID)
+	}
+	f.recordObjectId(req.ObjectId)
+
+	var layout fakeLayout
+	if req.SlideLayoutReference != nil {
+		found, ok := findFakeLayout(req.SlideLayoutReference.LayoutId)
+		if !ok {
+			return "", fmt.Errorf("unknown layout %q", req.SlideLayoutReference.LayoutId)
+		}
+		layout = found
+	}
+
+	mapped := map[string]string{}
+	for _, m := range req.PlaceholderIdMappings {
+		kind := ""
+		for _, ph := range layout.placeholders {
+			if ph.objectId == m.LayoutPlaceholderObjectId {
+				kind = ph.kind
+				break
+			}
+		}
+		if kind == "" {
+			return "", fmt.Errorf("layout %q has no placeholder %q", layout.name, m.LayoutPlaceholderObjectId)
+		}
+		f.recordObjectId(m.ObjectId)
+		mapped[m.LayoutPlaceholderObjectId] = m.ObjectId
+	}
+
+	elements := make([]*slides.PageElement, 0, len(layout.placeholders))
+	for _, ph := range layout.placeholders {
+		objectId, ok := mapped[ph.objectId]
+		if !ok {
+			objectId = id + "-" + strings.ToLower(ph.kind)
+		}
+		elements = append(elements, &slides.PageElement{
+			ObjectId: objectId,
+			Shape:    &slides.Shape{Placeholder: &slides.Placeholder{Type: ph.kind}},
+		})
+	}
+
+	f.slides = append(f.slides, &slides.Page{ObjectId: id, PageElements: elements})
+
+	return id, nil
+}
+
+// seedSlide adds a pre-existing slide to the deck, standing in for one the user
+// already had.
+func (f *fakeSlidesAPI) seedSlide() string {
 	f.nextID++
 	id := "slide-" + strconv.Itoa(f.nextID)
 
@@ -106,6 +304,20 @@ func (f *fakeSlidesAPI) addSlide() string {
 	})
 
 	return id
+}
+
+// placeholderText returns the text inserted into the placeholder of the given
+// kind on the nth slide (0-based) of the deck.
+func (f *fakeSlidesAPI) placeholderText(slideIndex int, kind string) string {
+	if slideIndex >= len(f.slides) {
+		return ""
+	}
+	for _, element := range f.slides[slideIndex].PageElements {
+		if element.Shape != nil && element.Shape.Placeholder != nil && element.Shape.Placeholder.Type == kind {
+			return f.text[element.ObjectId]
+		}
+	}
+	return ""
 }
 
 func (f *fakeSlidesAPI) removeSlide(id string) {
@@ -156,10 +368,11 @@ func newFakeConverter(t *testing.T, existingSlides int) (*MarkdownConverter, *fa
 
 	fake := &fakeSlidesAPI{}
 	for i := 0; i < existingSlides; i++ {
-		fake.addSlide()
+		fake.seedSlide()
 	}
 	// Requests made while seeding are setup, not part of what we assert on
 	fake.requests = nil
+	fake.batches = 0
 
 	client, err := NewClient(context.Background(), &http.Client{Transport: fake})
 	if err != nil {
@@ -234,16 +447,26 @@ func TestUpdateKeepsExistingSlidesWhenCreationFails(t *testing.T) {
 }
 
 // TestUpdateRemovesPartiallyBuiltSlidesOnFailure covers a rebuild that dies
-// after some slides already exist. Keeping the original deck is not enough on
-// its own: the half-built replacement has to go too, or the user is left with
-// both decks interleaved and every retry strands another run of orphans.
+// after some slides already exist. A single batch is atomic, so the only way to
+// strand slides now is to fail on a later chunk: the earlier chunks are already
+// committed. Keeping the original deck is not enough on its own — the
+// half-built replacement has to go too, or the user is left with both decks
+// interleaved and every retry strands another run of orphans.
 func TestUpdateRemovesPartiallyBuiltSlidesOnFailure(t *testing.T) {
 	mc, fake := newFakeConverter(t, 3)
 	before := fake.slideIDs()
-	fake.failCreateAfter = 1 // first slide succeeds, the second does not
+
+	// Force one slide per chunk so the failure lands after a committed chunk
+	withMaxRequestsPerBatch(t, 1)
+	fake.failCreateAfter = 1 // the first chunk succeeds, the second does not
 
 	if err := mc.UpdateSlidesFromMarkdown(twoSlideMarkdown); err == nil {
 		t.Fatal("expected an error when the rebuild fails partway")
+	}
+
+	if fake.batches < 2 {
+		t.Fatalf("the deck was sent in %d batches; the test only means anything "+
+			"if the failure lands after an earlier chunk committed", fake.batches)
 	}
 
 	if got := fake.slideIDs(); len(got) != len(before) {
@@ -313,6 +536,16 @@ func TestBatchUpdateRetriesAreNotNested(t *testing.T) {
 		t.Errorf("BatchUpdate made %d attempts, want %d; nested retries multiply the budget "+
 			"and hammer an API that is already rate limiting", attempts, maxRetries)
 	}
+}
+
+// withMaxRequestsPerBatch lowers the flush threshold for the duration of a
+// test, so chunking can be exercised without building an enormous deck.
+func withMaxRequestsPerBatch(t *testing.T, n int) {
+	t.Helper()
+
+	restore := maxRequestsPerBatch
+	maxRequestsPerBatch = n
+	t.Cleanup(func() { maxRequestsPerBatch = restore })
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -5,6 +5,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf16"
 
 	"google.golang.org/api/slides/v1"
@@ -342,6 +343,161 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 	return updatedPresentation.Slides, nil
 }
 
+// maxRequestsPerBatch caps how many requests one batchUpdate carries. A batch
+// is applied atomically, so a whole deck in a single call is the cheapest and
+// safest shape; the cap only exists because a very large deck could exceed the
+// API's per-request limits. It is a variable so tests can force chunking
+// without building an enormous deck.
+var maxRequestsPerBatch = 500
+
+// slideBatch accumulates requests and sends them in as few batchUpdate calls as
+// possible. Object IDs are assigned here rather than read back from the API,
+// which is what lets a slide and everything on it be built in one round trip.
+type slideBatch struct {
+	client         *Client
+	presentationId string
+	prefix         string
+	nextId         int
+
+	pending []*slides.Request
+	// Slides whose requests are still pending. A failed batch is rolled back
+	// by the API, so these must not be reported as created until they flush.
+	pendingSlideIds []string
+	createdSlideIds []string
+}
+
+func newSlideBatch(client *Client, presentationId string) *slideBatch {
+	return &slideBatch{
+		client:         client,
+		presentationId: presentationId,
+		prefix:         newObjectIdPrefix(),
+	}
+}
+
+// newObjectIdPrefix returns a prefix unique to this run, so generated IDs
+// cannot collide with objects already in the presentation.
+func newObjectIdPrefix() string {
+	return fmt.Sprintf("md%d", time.Now().UnixNano())
+}
+
+// id returns a fresh object ID. The API accepts [a-zA-Z0-9_][a-zA-Z0-9_-:]{4,49},
+// which the prefix, kind and counter stay well inside.
+func (b *slideBatch) id(kind string) string {
+	b.nextId++
+	return fmt.Sprintf("%s-%s%d", b.prefix, kind, b.nextId)
+}
+
+func (b *slideBatch) add(requests ...*slides.Request) {
+	b.pending = append(b.pending, requests...)
+}
+
+// addSlide records a slide the pending requests create.
+func (b *slideBatch) addSlide(slideId string) {
+	b.pendingSlideIds = append(b.pendingSlideIds, slideId)
+}
+
+func (b *slideBatch) flush() error {
+	if len(b.pending) == 0 {
+		return nil
+	}
+
+	pending := b.pending
+	b.pending = nil
+	pendingSlideIds := b.pendingSlideIds
+	b.pendingSlideIds = nil
+
+	if _, err := b.client.BatchUpdate(b.presentationId, pending); err != nil {
+		return err
+	}
+
+	b.createdSlideIds = append(b.createdSlideIds, pendingSlideIds...)
+	return nil
+}
+
+// flushIfFull sends the pending requests once they reach the cap. It is called
+// at slide boundaries so a chunk never splits a slide in half.
+func (b *slideBatch) flushIfFull() error {
+	if len(b.pending) < maxRequestsPerBatch {
+		return nil
+	}
+	return b.flush()
+}
+
+// layoutPlaceholders holds a layout's own placeholder element IDs.
+// CreateSlideRequest.PlaceholderIdMappings rejects a mapping for a placeholder
+// the layout does not define, so these are read from the layout itself rather
+// than assumed.
+type layoutPlaceholders struct {
+	title    string
+	body     string
+	subtitle string
+}
+
+func placeholdersForLayout(presentation *slides.Presentation, layoutId string) layoutPlaceholders {
+	var found layoutPlaceholders
+	if layoutId == "" {
+		return found
+	}
+
+	for _, layout := range presentation.Layouts {
+		if layout.ObjectId != layoutId {
+			continue
+		}
+		for _, element := range layout.PageElements {
+			if element.Shape == nil || element.Shape.Placeholder == nil {
+				continue
+			}
+			switch element.Shape.Placeholder.Type {
+			case "TITLE", "CENTERED_TITLE":
+				if found.title == "" {
+					found.title = element.ObjectId
+				}
+			case "BODY":
+				if found.body == "" {
+					found.body = element.ObjectId
+				}
+			case "SUBTITLE":
+				if found.subtitle == "" {
+					found.subtitle = element.ObjectId
+				}
+			}
+		}
+	}
+
+	return found
+}
+
+// slidePlaceholderIds names the placeholders this run will write to, and
+// returns the mappings that bind those names at slide creation time.
+type slidePlaceholderIds struct {
+	title    string
+	body     string
+	subtitle string
+}
+
+func (b *slideBatch) mapPlaceholders(layout layoutPlaceholders) (slidePlaceholderIds, []*slides.LayoutPlaceholderIdMapping) {
+	var ids slidePlaceholderIds
+	var mappings []*slides.LayoutPlaceholderIdMapping
+
+	bind := func(layoutObjectId, kind string) string {
+		if layoutObjectId == "" {
+			return ""
+		}
+		objectId := b.id(kind)
+		mappings = append(mappings, &slides.LayoutPlaceholderIdMapping{
+			LayoutPlaceholderObjectId: layoutObjectId,
+			ObjectId:                  objectId,
+		})
+		return objectId
+	}
+
+	ids.title = bind(layout.title, "title")
+	ids.body = bind(layout.body, "body")
+	ids.subtitle = bind(layout.subtitle, "sub")
+
+	return ids, mappings
+}
+
 // appendSlidesFromMarkdown appends the slides described by markdown to the end
 // of the presentation and returns their IDs. It never deletes anything, so a
 // caller replacing a deck can keep the old slides until the new ones are
@@ -351,10 +507,16 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 // clean them up rather than leaving them stranded in the presentation.
 func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string, error) {
 	parsedSlides := mc.ParseMarkdown(markdown)
-	createdSlideIds := make([]string, 0, len(parsedSlides))
+
+	// One fetch for the whole deck. The layouts carry the placeholder IDs every
+	// slide needs, so nothing here has to be read back per slide.
+	presentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return nil, err
+	}
 
 	// Get the TITLE_AND_BODY layout ID
-	layoutId, err := mc.client.GetLayoutId(mc.presentationId, "TITLE_AND_BODY")
+	layoutId, err := findLayoutId(presentation, "TITLE_AND_BODY")
 	if err != nil {
 		// Fallback to blank slides if layout not found
 		log.Printf("[WARNING] Failed to get TITLE_AND_BODY layout: %v\n", err)
@@ -362,11 +524,24 @@ func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string
 	}
 
 	// Get the TITLE layout ID for title slides (slides with only two headings)
-	titleLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE")
+	titleLayoutId, _ := findLayoutId(presentation, "TITLE")
 
 	// Create all slides fresh
 	// Get the TITLE_ONLY layout ID for slides with tables
-	titleOnlyLayoutId, _ := mc.client.GetLayoutId(mc.presentationId, "TITLE_ONLY")
+	titleOnlyLayoutId, _ := findLayoutId(presentation, "TITLE_ONLY")
+
+	bodyLayout := placeholdersForLayout(presentation, layoutId)
+	titleLayout := placeholdersForLayout(presentation, titleLayoutId)
+	titleOnlyLayout := placeholdersForLayout(presentation, titleOnlyLayoutId)
+
+	// The TITLE layout's subtitle slot is a SUBTITLE placeholder in most themes
+	// and a BODY one in the rest.
+	if titleLayout.subtitle == "" {
+		titleLayout.subtitle = titleLayout.body
+		titleLayout.body = ""
+	}
+
+	batch := newSlideBatch(mc.client, mc.presentationId)
 
 	for i, slide := range parsedSlides {
 		// Check if slide contains tables or images (both need more space)
@@ -404,129 +579,82 @@ func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string
 			isTitleSlide = (headingCount == 2 && nonHeadingCount == 0) || (i == 0 && headingCount > 0 && nonHeadingCount == 0)
 		}
 
-		// Choose layout based on content
-		var resp *slides.BatchUpdatePresentationResponse
-		var useLayoutBased bool
-		var layoutType string
+		// Choose layout based on content, naming the placeholders up front so the
+		// same batch can fill them.
+		slideId := batch.id("s")
+		var placeholders slidePlaceholderIds
+		var mappings []*slides.LayoutPlaceholderIdMapping
+		var createLayoutId, layoutType string
 		if isTitleSlide && titleLayoutId != "" {
 			// Use TITLE layout for title slides
-			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleLayoutId, -1)
-			useLayoutBased = true
+			createLayoutId = titleLayoutId
+			placeholders, mappings = batch.mapPlaceholders(titleLayout)
 			layoutType = "TITLE"
 		} else if needsTitleOnlyLayout && titleOnlyLayoutId != "" {
 			// Use TITLE_ONLY layout for slides with tables or images
-			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, titleOnlyLayoutId, -1)
-			useLayoutBased = true
+			createLayoutId = titleOnlyLayoutId
+			placeholders, mappings = batch.mapPlaceholders(titleOnlyLayout)
 			layoutType = "TITLE_ONLY"
 		} else if layoutId != "" {
 			// Use TITLE_AND_BODY layout for regular slides
-			resp, err = mc.client.CreateSlideWithLayout(mc.presentationId, layoutId, -1)
-			useLayoutBased = true
+			createLayoutId = layoutId
+			placeholders, mappings = batch.mapPlaceholders(bodyLayout)
 			layoutType = "TITLE_AND_BODY"
 		} else {
 			// Fallback to blank slide
-			resp, err = mc.client.CreateSlide(mc.presentationId, -1)
-			useLayoutBased = false
 			layoutType = "BLANK"
 		}
 
-		if err != nil {
-			return createdSlideIds, fmt.Errorf("failed to create slide %d: %w", i+1, err)
-		}
-
-		var slideId string
-		if len(resp.Replies) > 0 && resp.Replies[0].CreateSlide != nil {
-			slideId = resp.Replies[0].CreateSlide.ObjectId
-		} else {
-			return createdSlideIds, fmt.Errorf("failed to get slide ID for slide %d", i+1)
-		}
-		createdSlideIds = append(createdSlideIds, slideId)
+		batch.add(createSlideRequests(createLayoutId, -1, slideId, mappings)...)
+		batch.addSlide(slideId)
 
 		// Populate slide based on layout type and content
-		if useLayoutBased {
-			if layoutType == "TITLE" {
-				// Special handling for title slides
-				err = mc.populateSlideWithTitleLayout(slideId, slide)
-			} else if layoutType == "TITLE_ONLY" {
-				// Special handling for slides with tables (TITLE_ONLY layout)
-				err = mc.populateSlideWithTableLayout(slideId, slide)
-			} else {
-				// Regular TITLE_AND_BODY layout
-				err = mc.populateSlideWithLayout(slideId, slide)
-			}
-		} else {
+		switch layoutType {
+		case "TITLE":
+			// Special handling for title slides
+			populateSlideWithTitleLayout(batch, placeholders, slide)
+		case "TITLE_ONLY":
+			// Special handling for slides with tables (TITLE_ONLY layout)
+			populateSlideWithTableLayout(batch, slideId, placeholders, slide)
+		case "TITLE_AND_BODY":
+			// Regular TITLE_AND_BODY layout
+			populateSlideWithLayout(batch, placeholders, slide)
+		default:
 			// Blank slide
-			err = mc.populateSlide(slideId, slide)
+			populateSlide(batch, slideId, slide)
 		}
 
-		if err != nil {
-			return createdSlideIds, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
+		if err := batch.flushIfFull(); err != nil {
+			return batch.createdSlideIds, fmt.Errorf("failed to create slide %d: %w", i+1, err)
 		}
 	}
 
-	return createdSlideIds, nil
+	if err := batch.flush(); err != nil {
+		return batch.createdSlideIds, fmt.Errorf("failed to create %d slides: %w", len(parsedSlides), err)
+	}
+
+	return batch.createdSlideIds, nil
 }
 
-// populateSlideWithLayout populates a slide that uses a predefined layout
-func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide MarkdownSlide) error {
-	// Get the slide to find placeholder shapes
-	presentation, err := mc.client.GetPresentation(mc.presentationId)
-	if err != nil {
-		return fmt.Errorf("failed to get presentation: %w", err)
-	}
-
-	// Find the slide we just created
-	var currentSlide *slides.Page
-	for _, s := range presentation.Slides {
-		if s.ObjectId == slideId {
-			currentSlide = s
-			break
-		}
-	}
-
-	if currentSlide == nil {
-		return fmt.Errorf("slide not found: %s", slideId)
-	}
-
-	// Find title and body placeholders
-	var titlePlaceholderId, bodyPlaceholderId string
-	for _, element := range currentSlide.PageElements {
-		if element.Shape != nil && element.Shape.Placeholder != nil {
-			switch element.Shape.Placeholder.Type {
-			case "TITLE", "CENTERED_TITLE":
-				titlePlaceholderId = element.ObjectId
-			case "BODY":
-				bodyPlaceholderId = element.ObjectId
-			}
-		}
-	}
+// populateSlideWithLayout populates a slide that uses a predefined layout.
+//
+// The placeholders belong to a slide created in this same batch, so they are
+// still empty; the delete-text calls the unbatched path made first would fail
+// the whole batch rather than being ignorable.
+func populateSlideWithLayout(b *slideBatch, placeholders slidePlaceholderIds, slide MarkdownSlide) {
+	titlePlaceholderId, bodyPlaceholderId := placeholders.title, placeholders.body
 
 	// Insert title if we have a title placeholder
 	if titlePlaceholderId != "" && slide.Title != "" {
-		// Delete existing placeholder text
-		// Ignore error as placeholder might be empty
-		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-
-		// Insert new title text
-		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slide.Title)
-		if err != nil {
-			return fmt.Errorf("failed to insert title: %w", err)
-		}
+		b.add(insertTextInPlaceholderRequests(titlePlaceholderId, slide.Title)...)
 	}
 
 	// Insert body content if we have a body placeholder
 	if bodyPlaceholderId != "" && len(slide.Content) > 0 {
-		// Delete existing placeholder text
-		// Ignore error as placeholder might be empty
-		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, bodyPlaceholderId)
-
 		// Find the first heading (Level 2 or 3) to use as title if slide.Title is empty
 		var slideTitle string
 		var bodyText []string
-		var codeRanges []struct {
-			start int
-			end   int
-		}
+		var codeRanges []codeRange
 
 		// Build the text and track code positions using UTF-16 code units
 		currentPos := 0
@@ -570,10 +698,7 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 				// Track the position of code blocks for formatting using UTF-16 code units
 				codeStart := currentPos
 				codeEnd := currentPos + len(utf16.Encode([]rune(element.Content)))
-				codeRanges = append(codeRanges, struct {
-					start int
-					end   int
-				}{
+				codeRanges = append(codeRanges, codeRange{
 					start: codeStart,
 					end:   codeEnd,
 				})
@@ -587,71 +712,24 @@ func (mc *MarkdownConverter) populateSlideWithLayout(slideId string, slide Markd
 
 		// If we found a heading and no slide title was set, use it as title
 		if slideTitle != "" && slide.Title == "" && titlePlaceholderId != "" {
-			// Ignore error as placeholder might be empty
-			_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-
-			_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, slideTitle)
-			if err != nil {
-				return fmt.Errorf("failed to insert title: %w", err)
-			}
+			b.add(insertTextInPlaceholderRequests(titlePlaceholderId, slideTitle)...)
 		}
 
 		if len(bodyText) > 0 {
 			combinedText := strings.Join(bodyText, "\n")
-			_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, bodyPlaceholderId, combinedText)
-			if err != nil {
-				return fmt.Errorf("failed to insert body text: %w", err)
-			}
+			b.add(insertTextInPlaceholderRequests(bodyPlaceholderId, combinedText)...)
 
 			// Apply Courier New font to code blocks
-			if len(codeRanges) > 0 {
-				err = mc.client.ApplyCodeFormattingToPlaceholder(mc.presentationId, bodyPlaceholderId, codeRanges)
-				if err != nil {
-					// Return the error so we can see what's happening
-					return fmt.Errorf("failed to apply code formatting: %w", err)
-				}
-			}
+			b.add(applyCodeFormattingRequests(bodyPlaceholderId, codeRanges)...)
 		}
 	}
-
-	return nil
 }
 
 // populateSlideWithTitleLayout populates a slide with TITLE layout (for title slides with only headings)
 // This function is used for slides that contain only headings (typically 2: title and subtitle)
 // It maps the headings to the appropriate title and subtitle placeholders in the TITLE layout
-func (mc *MarkdownConverter) populateSlideWithTitleLayout(slideId string, slide MarkdownSlide) error {
-	// Get the slide to find placeholder shapes
-	presentation, err := mc.client.GetPresentation(mc.presentationId)
-	if err != nil {
-		return fmt.Errorf("failed to get presentation: %w", err)
-	}
-
-	// Find the slide we just created
-	var currentSlide *slides.Page
-	for _, s := range presentation.Slides {
-		if s.ObjectId == slideId {
-			currentSlide = s
-			break
-		}
-	}
-
-	if currentSlide == nil {
-		return fmt.Errorf("slide not found: %s", slideId)
-	}
-
-	// Find title and subtitle placeholders
-	var titlePlaceholderId, subtitlePlaceholderId string
-	for _, element := range currentSlide.PageElements {
-		if element.Shape != nil && element.Shape.Placeholder != nil {
-			switch element.Shape.Placeholder.Type {
-			case "TITLE", "CENTERED_TITLE":
-				titlePlaceholderId = element.ObjectId
-			case "SUBTITLE", "BODY":
-				subtitlePlaceholderId = element.ObjectId
-			}
-		}
-	}
+func populateSlideWithTitleLayout(b *slideBatch, placeholders slidePlaceholderIds, slide MarkdownSlide) {
+	titlePlaceholderId, subtitlePlaceholderId := placeholders.title, placeholders.subtitle
 
 	// Extract headings from content
 	var headings []string
@@ -682,61 +760,19 @@ func (mc *MarkdownConverter) populateSlideWithTitleLayout(slideId string, slide 
 
 	// Insert title
 	if titlePlaceholderId != "" && titleText != "" {
-		// Ignore error as placeholder might be empty
-		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-
-		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, titleText)
-		if err != nil {
-			return fmt.Errorf("failed to insert title: %w", err)
-		}
+		b.add(insertTextInPlaceholderRequests(titlePlaceholderId, titleText)...)
 	}
 
 	// Insert subtitle
 	if subtitlePlaceholderId != "" && subtitleText != "" {
-		// Ignore error as placeholder might be empty
-		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, subtitlePlaceholderId)
-
-		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, subtitlePlaceholderId, subtitleText)
-		if err != nil {
-			return fmt.Errorf("failed to insert subtitle: %w", err)
-		}
+		b.add(insertTextInPlaceholderRequests(subtitlePlaceholderId, subtitleText)...)
 	}
-
-	return nil
 }
 
 // populateSlideWithTableLayout populates a slide with TITLE_ONLY layout that contains tables or images
 // This layout provides more space for content that needs it (tables, images)
-func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide MarkdownSlide) error {
-	// Get the slide to find placeholder shapes
-	presentation, err := mc.client.GetPresentation(mc.presentationId)
-	if err != nil {
-		return fmt.Errorf("failed to get presentation: %w", err)
-	}
-
-	// Find the slide we just created
-	var currentSlide *slides.Page
-	for _, s := range presentation.Slides {
-		if s.ObjectId == slideId {
-			currentSlide = s
-			break
-		}
-	}
-
-	if currentSlide == nil {
-		return fmt.Errorf("slide not found: %s", slideId)
-	}
-
-	// Find title placeholder
-	var titlePlaceholderId string
-	for _, element := range currentSlide.PageElements {
-		if element.Shape != nil && element.Shape.Placeholder != nil {
-			switch element.Shape.Placeholder.Type {
-			case "TITLE", "CENTERED_TITLE":
-				titlePlaceholderId = element.ObjectId
-			}
-		}
-	}
+func populateSlideWithTableLayout(b *slideBatch, slideId string, placeholders slidePlaceholderIds, slide MarkdownSlide) {
+	titlePlaceholderId := placeholders.title
 
 	// Insert title - use slide title or first heading from content
 	titleText := slide.Title
@@ -751,15 +787,7 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 	}
 
 	if titlePlaceholderId != "" && titleText != "" {
-		// Delete existing placeholder text
-		// Ignore error as placeholder might be empty
-		_, _ = mc.client.DeleteTextInPlaceholder(mc.presentationId, titlePlaceholderId)
-
-		// Insert title text
-		_, err = mc.client.InsertTextInPlaceholder(mc.presentationId, titlePlaceholderId, titleText)
-		if err != nil {
-			return fmt.Errorf("failed to insert title: %w", err)
-		}
+		b.add(insertTextInPlaceholderRequests(titlePlaceholderId, titleText)...)
 	}
 
 	// Add content manually below the title
@@ -778,18 +806,15 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 				fontSize = H1FontSize
 			}
 
-			_, err := mc.client.AddTextBox(
-				mc.presentationId,
+			b.add(addTextBoxRequests(
 				slideId,
+				b.id("tb"),
 				element.Content,
 				MarginLeft,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight,
 				fontSize*LineHeight,
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += fontSize * LineHeight * 1.2
 
 		case "bullet", "numbering":
@@ -798,161 +823,126 @@ func (mc *MarkdownConverter) populateSlideWithTableLayout(slideId string, slide 
 				prefix = "1. "
 			}
 
-			_, err := mc.client.AddTextBox(
-				mc.presentationId,
+			b.add(addTextBoxRequests(
 				slideId,
+				b.id("tb"),
 				prefix+element.Content,
 				MarginLeft,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight,
 				DefaultFontSize*LineHeight,
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += DefaultFontSize * LineHeight
 
 		case "code":
 			// Add code block with Courier New font
-			_, err := mc.client.AddCodeTextBox(
-				mc.presentationId,
+			b.add(addCodeTextBoxRequests(
 				slideId,
+				b.id("code"),
 				element.Content,
 				MarginLeft,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight,
 				100, // Fixed height for code blocks
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += 100 + 10
 
 		case "image":
-			// Add image at 50% of slide size
-			imageWidth := SlideWidth * 0.5
-			imageHeight := SlideHeight * 0.5
-			imageX := (SlideWidth - imageWidth) / 2
-
-			_, err := mc.client.AddImage(
-				mc.presentationId,
-				slideId,
-				element.Content,
-				imageX,
-				currentY,
-				imageWidth,
-				imageHeight,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to add image: %w", err)
-			}
-			currentY += imageHeight + 10
-
-			// Add alt text as caption below image if present
-			if element.AltText != "" {
-				captionWidth := imageWidth
-				_, err := mc.client.AddTextBox(
-					mc.presentationId,
-					slideId,
-					element.AltText,
-					imageX,
-					currentY,
-					captionWidth,
-					DefaultFontSize*LineHeight,
-				)
-				if err != nil {
-					return fmt.Errorf("failed to add image caption: %w", err)
-				}
-				currentY += DefaultFontSize*LineHeight + 10
-			}
+			currentY = addMarkdownImage(b, slideId, element, currentY)
 
 		case "table":
-			if len(element.Items) > 0 {
-				rows := len(element.Items)
-				cols := strings.Count(element.Items[0], "|") - 1
-				if cols > 0 {
-					tableWidth := SlideWidth - MarginLeft - MarginRight
-					tableHeight := float64(rows) * 30.0
+			currentY = addMarkdownTable(b, slideId, element, currentY)
+		}
+	}
+}
 
-					resp, err := mc.client.AddTable(
-						mc.presentationId,
-						slideId,
-						rows,
-						cols,
-						MarginLeft,
-						currentY,
-						tableWidth,
-						tableHeight,
-					)
-					if err != nil {
-						return err
-					}
+// addMarkdownImage places an image, and its alt text as a caption, and returns
+// the vertical position the next element should start at.
+func addMarkdownImage(b *slideBatch, slideId string, element MarkdownElement, currentY float64) float64 {
+	// Add image at 50% of slide size
+	imageWidth := SlideWidth * 0.5
+	imageHeight := SlideHeight * 0.5
+	imageX := (SlideWidth - imageWidth) / 2
 
-					// Populate table cells
-					if resp != nil && len(resp.Replies) > 0 && resp.Replies[0].CreateTable != nil {
-						tableId := resp.Replies[0].CreateTable.ObjectId
+	b.add(addImageRequests(slideId, b.id("img"), element.Content, imageX, currentY, imageWidth, imageHeight)...)
+	currentY += imageHeight + 10
 
-						for rowIdx, row := range element.Items {
-							// Split by | and remove empty entries
-							cells := strings.Split(row, "|")
-							cellTexts := []string{}
-							for _, cell := range cells {
-								trimmed := strings.TrimSpace(cell)
-								if trimmed != "" {
-									cellTexts = append(cellTexts, trimmed)
-								}
-							}
+	// Add alt text as caption below image if present
+	if element.AltText != "" {
+		captionWidth := imageWidth
+		b.add(addTextBoxRequests(
+			slideId,
+			b.id("tb"),
+			element.AltText,
+			imageX,
+			currentY,
+			captionWidth,
+			DefaultFontSize*LineHeight,
+		)...)
+		currentY += DefaultFontSize*LineHeight + 10
+	}
 
-							// Insert text into each cell
-							for colIdx, cellText := range cellTexts {
-								if colIdx < cols {
-									_, err := mc.client.InsertTextInTableCell(
-										mc.presentationId,
-										tableId,
-										rowIdx,
-										colIdx,
-										cellText,
-									)
-									if err != nil {
-										// Log error but continue with other cells
-										log.Printf("[WARNING] Failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
-									}
-								}
-							}
-						}
-					}
+	return currentY
+}
 
-					currentY += tableHeight + 10
-				}
+// addMarkdownTable places a table and fills every cell in the same batch, so a
+// 6x4 table costs 25 requests rather than 25 round trips. It returns the
+// vertical position the next element should start at.
+func addMarkdownTable(b *slideBatch, slideId string, element MarkdownElement, currentY float64) float64 {
+	if len(element.Items) == 0 {
+		return currentY
+	}
+
+	rows := len(element.Items)
+	cols := strings.Count(element.Items[0], "|") - 1
+	if cols <= 0 {
+		return currentY
+	}
+
+	tableWidth := SlideWidth - MarginLeft - MarginRight
+	tableHeight := float64(rows) * 30.0
+	tableId := b.id("tbl")
+
+	b.add(addTableRequests(slideId, tableId, rows, cols, MarginLeft, currentY, tableWidth, tableHeight)...)
+
+	// Populate table cells
+	for rowIdx, row := range element.Items {
+		// Split by | and remove empty entries
+		cells := strings.Split(row, "|")
+		cellTexts := []string{}
+		for _, cell := range cells {
+			trimmed := strings.TrimSpace(cell)
+			if trimmed != "" {
+				cellTexts = append(cellTexts, trimmed)
+			}
+		}
+
+		// Insert text into each cell
+		for colIdx, cellText := range cellTexts {
+			if colIdx < cols {
+				b.add(insertTextInTableCellRequests(tableId, rowIdx, colIdx, cellText)...)
 			}
 		}
 	}
 
-	return nil
+	return currentY + tableHeight + 10
 }
 
-func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) error {
+func populateSlide(b *slideBatch, slideId string, slide MarkdownSlide) {
 	// All slides are now blank, so we add text boxes for everything
 	currentY := MarginTop
 
 	// Add title if exists
 	if slide.Title != "" {
-		resp, err := mc.client.AddTextBox(
-			mc.presentationId,
+		b.add(addTextBoxRequests(
 			slideId,
+			b.id("tb"),
 			slide.Title,
 			MarginLeft,
 			currentY,
 			SlideWidth-MarginLeft-MarginRight,
 			TitleFontSize*LineHeight,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to add title '%s': %w", slide.Title, err)
-		}
-		// Log response for debugging
-		if resp == nil || len(resp.Replies) == 0 {
-			return fmt.Errorf("no response for title '%s'", slide.Title)
-		}
+		)...)
 		currentY += TitleFontSize * LineHeight * 1.5
 	}
 
@@ -969,18 +959,15 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 				fontSize = H3FontSize
 			}
 
-			_, err := mc.client.AddTextBox(
-				mc.presentationId,
+			b.add(addTextBoxRequests(
 				slideId,
+				b.id("tb"),
 				element.Content,
 				MarginLeft,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight,
 				fontSize*LineHeight,
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += fontSize * LineHeight * 1.2
 
 		case "bullet", "numbering":
@@ -990,138 +977,37 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 			}
 			indent := float64(element.Level) * 20.0
 
-			_, err := mc.client.AddTextBox(
-				mc.presentationId,
+			b.add(addTextBoxRequests(
 				slideId,
+				b.id("tb"),
 				prefix+element.Content,
 				MarginLeft+indent,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight-indent,
 				DefaultFontSize*LineHeight,
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += DefaultFontSize * LineHeight
 
 		case "code":
 			// Add code block with Courier New font
-			_, err := mc.client.AddCodeTextBox(
-				mc.presentationId,
+			b.add(addCodeTextBoxRequests(
 				slideId,
+				b.id("code"),
 				element.Content,
 				MarginLeft,
 				currentY,
 				SlideWidth-MarginLeft-MarginRight,
 				100, // Fixed height for code blocks
-			)
-			if err != nil {
-				return err
-			}
+			)...)
 			currentY += 100 + 10
 
 		case "image":
-			// Add image at 50% of slide size
-			imageWidth := SlideWidth * 0.5
-			imageHeight := SlideHeight * 0.5
-			imageX := (SlideWidth - imageWidth) / 2
-
-			_, err := mc.client.AddImage(
-				mc.presentationId,
-				slideId,
-				element.Content,
-				imageX,
-				currentY,
-				imageWidth,
-				imageHeight,
-			)
-			if err != nil {
-				return err
-			}
-			currentY += imageHeight + 10
-
-			// Add alt text as caption below image if present
-			if element.AltText != "" {
-				captionWidth := imageWidth
-				_, err := mc.client.AddTextBox(
-					mc.presentationId,
-					slideId,
-					element.AltText,
-					imageX,
-					currentY,
-					captionWidth,
-					DefaultFontSize*LineHeight,
-				)
-				if err != nil {
-					return err
-				}
-				currentY += DefaultFontSize*LineHeight + 10
-			}
+			currentY = addMarkdownImage(b, slideId, element, currentY)
 
 		case "table":
-			if len(element.Items) > 0 {
-				rows := len(element.Items)
-				cols := strings.Count(element.Items[0], "|") - 1
-				if cols > 0 {
-					tableWidth := SlideWidth - MarginLeft - MarginRight
-					tableHeight := float64(rows) * 30.0
-
-					resp, err := mc.client.AddTable(
-						mc.presentationId,
-						slideId,
-						rows,
-						cols,
-						MarginLeft,
-						currentY,
-						tableWidth,
-						tableHeight,
-					)
-					if err != nil {
-						return err
-					}
-
-					// Get the table ID from the response
-					if resp != nil && len(resp.Replies) > 0 && resp.Replies[0].CreateTable != nil {
-						tableId := resp.Replies[0].CreateTable.ObjectId
-
-						// Populate table cells with text
-						for rowIdx, row := range element.Items {
-							// Split by | and remove empty entries
-							cells := strings.Split(row, "|")
-							cellTexts := []string{}
-							for _, cell := range cells {
-								trimmed := strings.TrimSpace(cell)
-								if trimmed != "" {
-									cellTexts = append(cellTexts, trimmed)
-								}
-							}
-
-							// Insert text into each cell
-							for colIdx, cellText := range cellTexts {
-								if colIdx < cols {
-									_, err := mc.client.InsertTextInTableCell(
-										mc.presentationId,
-										tableId,
-										rowIdx,
-										colIdx,
-										cellText,
-									)
-									if err != nil {
-										// Log error but continue with other cells
-										log.Printf("[WARNING] Failed to insert text in cell [%d,%d]: %v\n", rowIdx, colIdx, err)
-									}
-								}
-							}
-						}
-					}
-
-					currentY += tableHeight + 10
-				}
-			}
+			currentY = addMarkdownTable(b, slideId, element, currentY)
 		}
 	}
-
-	return nil
 }
 
 // UpdateSlidesFromMarkdown replaces the deck's contents with the slides
@@ -1160,10 +1046,32 @@ func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
 			len(obsoleteSlideIds))
 	}
 
-	for _, slideId := range obsoleteSlideIds {
-		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
-			return fmt.Errorf("created %d new slides but failed to remove the previous slide %s: %w",
-				len(createdSlideIds), slideId, err)
+	if err := mc.deleteSlidesInBatches(obsoleteSlideIds); err != nil {
+		return fmt.Errorf("created %d new slides but failed to remove the previous ones: %w",
+			len(createdSlideIds), err)
+	}
+
+	return nil
+}
+
+// deleteSlidesInBatches removes slides with as few calls as the request cap
+// allows. Deleting one slide per call would put the update straight back into
+// rate limiting on exactly the decks this batching exists to serve: replacing a
+// 45-slide deck would cost 45 calls to tear the old one down.
+func (mc *MarkdownConverter) deleteSlidesInBatches(slideIds []string) error {
+	for start := 0; start < len(slideIds); start += maxRequestsPerBatch {
+		end := start + maxRequestsPerBatch
+		if end > len(slideIds) {
+			end = len(slideIds)
+		}
+
+		requests := make([]*slides.Request, 0, end-start)
+		for _, slideId := range slideIds[start:end] {
+			requests = append(requests, deleteSlideRequests(slideId)...)
+		}
+
+		if _, err := mc.client.BatchUpdate(mc.presentationId, requests); err != nil {
+			return err
 		}
 	}
 
@@ -1174,10 +1082,12 @@ func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
 // best effort: the caller is already returning the error that caused the
 // rollback, and a cleanup failure should not replace it.
 func (mc *MarkdownConverter) removePartialSlides(slideIds []string) {
-	for _, slideId := range slideIds {
-		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
-			log.Printf("[WARNING] Failed to remove partially built slide %s; it may need deleting by hand: %v\n",
-				slideId, err)
-		}
+	if len(slideIds) == 0 {
+		return
+	}
+
+	if err := mc.deleteSlidesInBatches(slideIds); err != nil {
+		log.Printf("[WARNING] Failed to remove %d partially built slide(s); they may need deleting by hand: %v\n",
+			len(slideIds), err)
 	}
 }
