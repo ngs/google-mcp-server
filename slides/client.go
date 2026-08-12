@@ -14,8 +14,11 @@ import (
 	"google.golang.org/api/slides/v1"
 )
 
-const (
-	maxRetries       = 10
+const maxRetries = 10
+
+// Backoff durations are variables rather than constants so tests can shorten
+// them; nothing outside tests reassigns them.
+var (
 	initialBackoff   = 5 * time.Second
 	rateLimitBackoff = 60 * time.Second // Wait for quota reset on 429
 )
@@ -894,9 +897,7 @@ func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) 
 	}
 
 	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-			return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-		})
+		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
 	})
 }
 

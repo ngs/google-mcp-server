@@ -313,8 +313,6 @@ func (mc *MarkdownConverter) estimateLineHeight(line string) float64 {
 }
 
 func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slides.Page, error) {
-	parsedSlides := mc.ParseMarkdown(markdown)
-
 	// Get current presentation to check existing slides
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
 	if err != nil {
@@ -330,6 +328,27 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 			log.Printf("[WARNING] Failed to delete first slide: %v\n", err)
 		}
 	}
+
+	if _, err := mc.appendSlidesFromMarkdown(markdown); err != nil {
+		return nil, err
+	}
+
+	// Return updated presentation slides
+	updatedPresentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return nil, err
+	}
+
+	return updatedPresentation.Slides, nil
+}
+
+// appendSlidesFromMarkdown appends the slides described by markdown to the end
+// of the presentation and returns their IDs. It never deletes anything, so a
+// caller replacing a deck can keep the old slides until the new ones are
+// safely in place.
+func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string, error) {
+	parsedSlides := mc.ParseMarkdown(markdown)
+	createdSlideIds := make([]string, 0, len(parsedSlides))
 
 	// Get the TITLE_AND_BODY layout ID
 	layoutId, err := mc.client.GetLayoutId(mc.presentationId, "TITLE_AND_BODY")
@@ -418,6 +437,7 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		} else {
 			return nil, fmt.Errorf("failed to get slide ID for slide %d", i+1)
 		}
+		createdSlideIds = append(createdSlideIds, slideId)
 
 		// Populate slide based on layout type and content
 		if useLayoutBased {
@@ -441,13 +461,7 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		}
 	}
 
-	// Return updated presentation slides
-	updatedPresentation, err := mc.client.GetPresentation(mc.presentationId)
-	if err != nil {
-		return nil, err
-	}
-
-	return updatedPresentation.Slides, nil
+	return createdSlideIds, nil
 }
 
 // populateSlideWithLayout populates a slide that uses a predefined layout
@@ -1107,24 +1121,43 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 	return nil
 }
 
+// UpdateSlidesFromMarkdown replaces the deck's contents with the slides
+// described by markdown.
+//
+// The new slides are appended first and the previous ones are removed only once
+// every new slide is in place. Deleting first, as this used to, meant that a
+// failure partway through the rebuild — a rate limit on a large deck, most
+// likely — left the user with an empty presentation and no way back.
 func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
-	// Get current presentation
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
 	if err != nil {
 		return err
 	}
 
-	// Delete all existing slides except the first one
-	if len(presentation.Slides) > 1 {
-		for i := 1; i < len(presentation.Slides); i++ {
-			_, err := mc.client.DeleteSlide(mc.presentationId, presentation.Slides[i].ObjectId)
-			if err != nil {
-				return err
-			}
+	obsoleteSlideIds := make([]string, 0, len(presentation.Slides))
+	for _, slide := range presentation.Slides {
+		obsoleteSlideIds = append(obsoleteSlideIds, slide.ObjectId)
+	}
+
+	createdSlideIds, err := mc.appendSlidesFromMarkdown(markdown)
+	if err != nil {
+		return fmt.Errorf("failed to build the new slides, so the existing %d were left in place: %w",
+			len(obsoleteSlideIds), err)
+	}
+
+	// Removing every slide would leave a presentation the API cannot represent,
+	// and would discard the user's deck in exchange for nothing.
+	if len(createdSlideIds) == 0 {
+		return fmt.Errorf("markdown produced no slides, so the existing %d were left in place",
+			len(obsoleteSlideIds))
+	}
+
+	for _, slideId := range obsoleteSlideIds {
+		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
+			return fmt.Errorf("created %d new slides but failed to remove the previous slide %s: %w",
+				len(createdSlideIds), slideId, err)
 		}
 	}
 
-	// Create new slides from markdown
-	_, err = mc.CreateSlidesFromMarkdown(markdown)
-	return err
+	return nil
 }
