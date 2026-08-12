@@ -346,6 +346,9 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 // of the presentation and returns their IDs. It never deletes anything, so a
 // caller replacing a deck can keep the old slides until the new ones are
 // safely in place.
+//
+// On failure it returns the slides it did manage to create, so the caller can
+// clean them up rather than leaving them stranded in the presentation.
 func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string, error) {
 	parsedSlides := mc.ParseMarkdown(markdown)
 	createdSlideIds := make([]string, 0, len(parsedSlides))
@@ -428,14 +431,14 @@ func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to create slide %d: %w", i+1, err)
+			return createdSlideIds, fmt.Errorf("failed to create slide %d: %w", i+1, err)
 		}
 
 		var slideId string
 		if len(resp.Replies) > 0 && resp.Replies[0].CreateSlide != nil {
 			slideId = resp.Replies[0].CreateSlide.ObjectId
 		} else {
-			return nil, fmt.Errorf("failed to get slide ID for slide %d", i+1)
+			return createdSlideIds, fmt.Errorf("failed to get slide ID for slide %d", i+1)
 		}
 		createdSlideIds = append(createdSlideIds, slideId)
 
@@ -457,7 +460,7 @@ func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
+			return createdSlideIds, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
 		}
 	}
 
@@ -1141,6 +1144,11 @@ func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
 
 	createdSlideIds, err := mc.appendSlidesFromMarkdown(markdown)
 	if err != nil {
+		// Roll back the half-built replacement. Without this the user is left
+		// with their original deck plus a run of partial slides, and each retry
+		// strands another run.
+		mc.removePartialSlides(createdSlideIds)
+
 		return fmt.Errorf("failed to build the new slides, so the existing %d were left in place: %w",
 			len(obsoleteSlideIds), err)
 	}
@@ -1160,4 +1168,16 @@ func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
 	}
 
 	return nil
+}
+
+// removePartialSlides deletes slides left behind by a failed rebuild. It is
+// best effort: the caller is already returning the error that caused the
+// rollback, and a cleanup failure should not replace it.
+func (mc *MarkdownConverter) removePartialSlides(slideIds []string) {
+	for _, slideId := range slideIds {
+		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
+			log.Printf("[WARNING] Failed to remove partially built slide %s; it may need deleting by hand: %v\n",
+				slideId, err)
+		}
+	}
 }

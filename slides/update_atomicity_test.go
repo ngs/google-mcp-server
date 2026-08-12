@@ -22,6 +22,9 @@ type fakeSlidesAPI struct {
 	requests   []string       // request kinds in the order they were issued
 	nextID     int
 	failCreate bool // fail any batch containing a createSlide
+	// failCreateAfter, when non-zero, lets that many slides be created before
+	// failing, so tests can exercise a rebuild that dies partway through
+	failCreateAfter int
 }
 
 func (f *fakeSlidesAPI) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -61,6 +64,10 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 		switch {
 		case r.CreateSlide != nil:
 			f.requests = append(f.requests, "createSlide")
+			if f.failCreateAfter > 0 && f.count("createSlide") > f.failCreateAfter {
+				return jsonResponse(http.StatusInternalServerError,
+					map[string]any{"error": map[string]any{"code": 500, "message": "boom"}})
+			}
 			if f.failCreate {
 				return jsonResponse(http.StatusInternalServerError,
 					map[string]any{"error": map[string]any{"code": 500, "message": "boom"}})
@@ -223,6 +230,40 @@ func TestUpdateKeepsExistingSlidesWhenCreationFails(t *testing.T) {
 	}
 	if got := fake.slideIDs(); len(got) != len(before) {
 		t.Errorf("deck has %d slides after a failed update, want the original %d", len(got), len(before))
+	}
+}
+
+// TestUpdateRemovesPartiallyBuiltSlidesOnFailure covers a rebuild that dies
+// after some slides already exist. Keeping the original deck is not enough on
+// its own: the half-built replacement has to go too, or the user is left with
+// both decks interleaved and every retry strands another run of orphans.
+func TestUpdateRemovesPartiallyBuiltSlidesOnFailure(t *testing.T) {
+	mc, fake := newFakeConverter(t, 3)
+	before := fake.slideIDs()
+	fake.failCreateAfter = 1 // first slide succeeds, the second does not
+
+	if err := mc.UpdateSlidesFromMarkdown(twoSlideMarkdown); err == nil {
+		t.Fatal("expected an error when the rebuild fails partway")
+	}
+
+	if got := fake.slideIDs(); len(got) != len(before) {
+		t.Errorf("deck has %d slides after a partial failure, want the original %d; "+
+			"orphaned slides from the failed rebuild were left behind", len(got), len(before))
+	}
+	for i, id := range fake.slideIDs() {
+		if i < len(before) && id != before[i] {
+			t.Errorf("slide %d is %s, want the original %s", i, id, before[i])
+		}
+	}
+
+	// Retrying must not accumulate orphans either
+	fake.failCreateAfter = 1
+	fake.requests = nil
+	if err := mc.UpdateSlidesFromMarkdown(twoSlideMarkdown); err == nil {
+		t.Fatal("expected an error on the retry as well")
+	}
+	if got := fake.slideIDs(); len(got) != len(before) {
+		t.Errorf("deck grew to %d slides after retrying a failing update, want %d", len(got), len(before))
 	}
 }
 
