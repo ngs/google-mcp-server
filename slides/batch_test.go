@@ -220,9 +220,7 @@ func TestLayoutPathsProduceTheExpectedContent(t *testing.T) {
 func TestBuildChunksLargeDecks(t *testing.T) {
 	const slideCount = 10
 
-	// Each slide costs more than one request, so a threshold of 1 flushes at
-	// every slide boundary
-	withMaxRequestsPerBatch(t, 1)
+	withMaxRequestsPerBatch(t, 4)
 
 	mc, fake := newFakeConverter(t, 0)
 
@@ -234,9 +232,69 @@ func TestBuildChunksLargeDecks(t *testing.T) {
 	if len(created) != slideCount {
 		t.Fatalf("built %d slides, want %d", len(created), slideCount)
 	}
-	if fake.batches != slideCount {
-		t.Errorf("sent %d batches for %d slides at a threshold of one request per batch, want %d",
-			fake.batches, slideCount, slideCount)
+	if fake.batches < 2 {
+		t.Errorf("sent %d batches for %d slides at a threshold of 4, want the deck split across several",
+			fake.batches, slideCount)
+	}
+	assertBatchesWithinCap(t, fake, 4)
+}
+
+// TestNoBatchExceedsTheCap is the invariant chunking exists for. Checking the
+// buffer only after a whole slide has been appended does not enforce it: a
+// slide landing on an almost-full buffer, or a single slide carrying a large
+// table, pushes one batch past the limit.
+func TestNoBatchExceedsTheCap(t *testing.T) {
+	bigTable := "# Data\n\n| A | B | C | D |\n| --- | --- | --- | --- |\n"
+	for i := 0; i < 30; i++ {
+		bigTable += fmt.Sprintf("| r%dc1 | r%dc2 | r%dc3 | r%dc4 |\n", i, i, i, i)
+	}
+
+	cases := []struct {
+		name     string
+		cap      int
+		markdown string
+	}{
+		{
+			// Ordinary slides arriving on a buffer that is nearly full
+			name:     "slides straddling the boundary",
+			cap:      5,
+			markdown: buildMarkdownDeck(12),
+		},
+		{
+			// One slide whose own requests exceed the cap several times over
+			name:     "a single slide larger than the cap",
+			cap:      8,
+			markdown: bigTable,
+		},
+		{
+			name:     "a big table among ordinary slides",
+			cap:      16,
+			markdown: buildMarkdownDeck(3) + "\n---\n\n" + bigTable + "\n---\n\n" + buildMarkdownDeck(3),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withMaxRequestsPerBatch(t, tc.cap)
+
+			mc, fake := newFakeConverter(t, 0)
+			if _, err := mc.appendSlidesFromMarkdown(tc.markdown); err != nil {
+				t.Fatalf("appendSlidesFromMarkdown() error = %v", err)
+			}
+
+			assertBatchesWithinCap(t, fake, tc.cap)
+		})
+	}
+}
+
+func assertBatchesWithinCap(t *testing.T, fake *fakeSlidesAPI, cap int) {
+	t.Helper()
+
+	for i, size := range fake.batchSizes {
+		if size > cap {
+			t.Errorf("batch %d carried %d requests, exceeding the cap of %d; "+
+				"the API rejects oversized batches", i+1, size, cap)
+		}
 	}
 }
 

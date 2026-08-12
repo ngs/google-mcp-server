@@ -397,30 +397,50 @@ func (b *slideBatch) addSlide(slideId string) {
 }
 
 func (b *slideBatch) flush() error {
-	if len(b.pending) == 0 {
+	return b.flushChunk(len(b.pending))
+}
+
+// flushChunk sends the first n pending requests and keeps the rest.
+//
+// Every slide's createSlide request is appended before the rest of that slide,
+// and a chunk is only cut once the buffer has reached the cap, so the cut is
+// always past the createSlide of every slide represented in it. That makes it
+// safe to treat all pending slides as created once the chunk lands.
+func (b *slideBatch) flushChunk(n int) error {
+	if n > len(b.pending) {
+		n = len(b.pending)
+	}
+	if n == 0 {
 		return nil
 	}
 
-	pending := b.pending
-	b.pending = nil
-	pendingSlideIds := b.pendingSlideIds
-	b.pendingSlideIds = nil
-
-	if _, err := b.client.BatchUpdate(b.presentationId, pending); err != nil {
+	if _, err := b.client.BatchUpdate(b.presentationId, b.pending[:n]); err != nil {
 		return err
 	}
 
-	b.createdSlideIds = append(b.createdSlideIds, pendingSlideIds...)
+	b.pending = b.pending[n:]
+	b.createdSlideIds = append(b.createdSlideIds, b.pendingSlideIds...)
+	b.pendingSlideIds = nil
+
 	return nil
 }
 
-// flushIfFull sends the pending requests once they reach the cap. It is called
-// at slide boundaries so a chunk never splits a slide in half.
+// flushIfFull sends full chunks while the buffer is at or over the cap, so no
+// single BatchUpdate ever carries more than maxRequestsPerBatch requests.
+//
+// Checking only at slide boundaries is not enough on its own: a slide appended
+// onto an almost-full buffer, or a single slide with a large table, would
+// otherwise push one batch past the cap. Chunking mid-slide is safe because the
+// object IDs are ours, so a later chunk addresses objects an earlier one
+// created.
 func (b *slideBatch) flushIfFull() error {
-	if len(b.pending) < maxRequestsPerBatch {
-		return nil
+	for len(b.pending) >= maxRequestsPerBatch {
+		if err := b.flushChunk(maxRequestsPerBatch); err != nil {
+			return err
+		}
 	}
-	return b.flush()
+
+	return nil
 }
 
 // layoutPlaceholders holds a layout's own placeholder element IDs.
@@ -624,13 +644,18 @@ func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string
 			populateSlide(batch, slideId, slide)
 		}
 
+		// The rejected request can belong to any slide in the batch, not just
+		// the one that filled it, so the error names the batch rather than
+		// pointing at a slide that may be blameless.
 		if err := batch.flushIfFull(); err != nil {
-			return batch.createdSlideIds, fmt.Errorf("failed to create slide %d: %w", i+1, err)
+			return batch.createdSlideIds, fmt.Errorf(
+				"a batch of requests covering slides up to %d was rejected: %w", i+1, err)
 		}
 	}
 
 	if err := batch.flush(); err != nil {
-		return batch.createdSlideIds, fmt.Errorf("failed to create %d slides: %w", len(parsedSlides), err)
+		return batch.createdSlideIds, fmt.Errorf(
+			"the final batch of requests for %d slides was rejected: %w", len(parsedSlides), err)
 	}
 
 	return batch.createdSlideIds, nil

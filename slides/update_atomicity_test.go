@@ -87,6 +87,9 @@ type fakeSlidesAPI struct {
 	slides   []*slides.Page // current deck, in order
 	requests []string       // request kinds in the order they were issued
 	batches  int            // batchUpdate calls, successful or not
+	// batchSizes records how many requests each batchUpdate carried, so tests
+	// can check the per-batch cap is actually enforced
+	batchSizes []int
 	// text holds what landed in each shape, keyed by object ID and, for table
 	// cells, by "tableId[row,col]".
 	text map[string]string
@@ -130,6 +133,7 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 	}
 
 	f.batches++
+	f.batchSizes = append(f.batchSizes, len(parsed.Requests))
 
 	// batchUpdate is atomic: a batch that fails partway leaves nothing behind,
 	// so the fake has to undo whatever this batch had already applied.
