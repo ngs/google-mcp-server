@@ -111,6 +111,12 @@ func (c *Client) GetLayoutId(presentationId string, layoutName string) (string, 
 		return "", err
 	}
 
+	return findLayoutId(presentation, layoutName)
+}
+
+// findLayoutId resolves a layout name against an already fetched presentation,
+// so a caller building many slides does not have to refetch per lookup.
+func findLayoutId(presentation *slides.Presentation, layoutName string) (string, error) {
 	// Iterate through layouts to find the one with matching name
 	for _, layout := range presentation.Layouts {
 		if layout.LayoutProperties != nil && layout.LayoutProperties.Name == layoutName {
@@ -150,8 +156,25 @@ func (c *Client) ListPresentations() ([]*slides.Presentation, error) {
 	return nil, fmt.Errorf("use Drive API to list presentations")
 }
 
-func (c *Client) CreateSlide(presentationId string, insertionIndex int) (*slides.BatchUpdatePresentationResponse, error) {
-	createSlideReq := &slides.CreateSlideRequest{}
+// createSlideRequests builds a slide creation request. An empty layoutId leaves
+// the layout unspecified, an empty objectId lets the API assign one, and a
+// negative insertionIndex appends the slide to the end of the deck.
+//
+// placeholderIds names the layout's placeholders at creation time so later
+// requests in the same batch can address them; a mapping for a placeholder the
+// layout does not have is rejected by the API, so callers must derive these
+// from the layout itself.
+func createSlideRequests(layoutId string, insertionIndex int, objectId string, placeholderIds []*slides.LayoutPlaceholderIdMapping) []*slides.Request {
+	createSlideReq := &slides.CreateSlideRequest{
+		ObjectId:              objectId,
+		PlaceholderIdMappings: placeholderIds,
+	}
+
+	if layoutId != "" {
+		createSlideReq.SlideLayoutReference = &slides.LayoutReference{
+			LayoutId: layoutId,
+		}
+	}
 
 	// Only set InsertionIndex if it's >= 0
 	// If not set, the slide will be appended to the end
@@ -159,66 +182,34 @@ func (c *Client) CreateSlide(presentationId string, insertionIndex int) (*slides
 		createSlideReq.InsertionIndex = int64(insertionIndex)
 	}
 
-	requests := []*slides.Request{
+	return []*slides.Request{
 		{
 			CreateSlide: createSlideReq,
 		},
 	}
+}
 
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+func (c *Client) CreateSlide(presentationId string, insertionIndex int) (*slides.BatchUpdatePresentationResponse, error) {
+	return c.BatchUpdate(presentationId, createSlideRequests("", insertionIndex, "", nil))
 }
 
 // CreateSlideWithLayout creates a new slide with a specific layout
 func (c *Client) CreateSlideWithLayout(presentationId string, layoutId string, insertionIndex int) (*slides.BatchUpdatePresentationResponse, error) {
-	createSlideReq := &slides.CreateSlideRequest{
-		SlideLayoutReference: &slides.LayoutReference{
-			LayoutId: layoutId,
-		},
-	}
-
-	// Only set InsertionIndex if it's >= 0
-	// If not set, the slide will be appended to the end
-	if insertionIndex >= 0 {
-		createSlideReq.InsertionIndex = int64(insertionIndex)
-	}
-
-	requests := []*slides.Request{
-		{
-			CreateSlide: createSlideReq,
-		},
-	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+	return c.BatchUpdate(presentationId, createSlideRequests(layoutId, insertionIndex, "", nil))
 }
 
-func (c *Client) DeleteSlide(presentationId string, slideId string) (*slides.BatchUpdatePresentationResponse, error) {
-	requests := []*slides.Request{
+func deleteSlideRequests(slideId string) []*slides.Request {
+	return []*slides.Request{
 		{
 			DeleteObject: &slides.DeleteObjectRequest{
 				ObjectId: slideId,
 			},
 		},
 	}
+}
 
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+func (c *Client) DeleteSlide(presentationId string, slideId string) (*slides.BatchUpdatePresentationResponse, error) {
+	return c.BatchUpdate(presentationId, deleteSlideRequests(slideId))
 }
 
 func (c *Client) DuplicateSlide(presentationId string, slideId string) (*slides.BatchUpdatePresentationResponse, error) {
@@ -242,6 +233,10 @@ func (c *Client) DuplicateSlide(presentationId string, slideId string) (*slides.
 // ReplaceAllTextInShape replaces all text in existing shapes on a slide
 // processMarkdownText processes markdown formatting and returns clean text with format ranges
 func (c *Client) processMarkdownText(text string) (string, []FormatRange) {
+	return processMarkdownText(text)
+}
+
+func processMarkdownText(text string) (string, []FormatRange) {
 	// Temporarily disable all formatting to avoid character counting issues
 	// Just remove markdown markers without applying any formatting
 	result := text
@@ -289,10 +284,11 @@ func (c *Client) ReplaceAllTextInSlide(presentationId string, slideId string, ol
 	})
 }
 
-// InsertTextInPlaceholder inserts text into a placeholder shape
-func (c *Client) InsertTextInPlaceholder(presentationId string, shapeId string, text string) (*slides.BatchUpdatePresentationResponse, error) {
+// insertTextInPlaceholderRequests builds the requests that fill a placeholder
+// shape with markdown-formatted text.
+func insertTextInPlaceholderRequests(shapeId string, text string) []*slides.Request {
 	// Process markdown formatting properly for placeholders
-	processedText, formatRanges := c.processMarkdownTextWithFormatting(text)
+	processedText, formatRanges := processMarkdownTextWithFormatting(text)
 
 	requests := []*slides.Request{
 		{
@@ -325,17 +321,20 @@ func (c *Client) InsertTextInPlaceholder(presentationId string, shapeId string, 
 	// Don't apply Courier New font to all text anymore
 	// Code blocks and inline code are handled in processMarkdownTextWithFormatting
 
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
+	return requests
+}
 
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+// InsertTextInPlaceholder inserts text into a placeholder shape
+func (c *Client) InsertTextInPlaceholder(presentationId string, shapeId string, text string) (*slides.BatchUpdatePresentationResponse, error) {
+	return c.BatchUpdate(presentationId, insertTextInPlaceholderRequests(shapeId, text))
 }
 
 // processMarkdownTextWithFormatting processes markdown with proper formatting for placeholders
 func (c *Client) processMarkdownTextWithFormatting(text string) (string, []FormatRange) {
+	return processMarkdownTextWithFormatting(text)
+}
+
+func processMarkdownTextWithFormatting(text string) (string, []FormatRange) {
 	var formatRanges []FormatRange
 	result := text
 
@@ -554,9 +553,8 @@ func (c *Client) processMarkdownTextWithFormatting(text string) (string, []Forma
 	return result, formatRanges
 }
 
-// DeleteTextInPlaceholder deletes existing text in a placeholder
-func (c *Client) DeleteTextInPlaceholder(presentationId string, shapeId string) (*slides.BatchUpdatePresentationResponse, error) {
-	requests := []*slides.Request{
+func deleteTextInPlaceholderRequests(shapeId string) []*slides.Request {
+	return []*slides.Request{
 		{
 			DeleteText: &slides.DeleteTextRequest{
 				ObjectId: shapeId,
@@ -566,17 +564,16 @@ func (c *Client) DeleteTextInPlaceholder(presentationId string, shapeId string) 
 			},
 		},
 	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
 }
 
-func (c *Client) AddTextBox(presentationId string, slideId string, text string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+// DeleteTextInPlaceholder deletes existing text in a placeholder
+func (c *Client) DeleteTextInPlaceholder(presentationId string, shapeId string) (*slides.BatchUpdatePresentationResponse, error) {
+	return c.BatchUpdate(presentationId, deleteTextInPlaceholderRequests(shapeId))
+}
+
+// addTextBoxRequests builds the requests that place a text box on a slide under
+// a caller-supplied element ID.
+func addTextBoxRequests(slideId string, elementId string, text string, x, y, width, height float64) []*slides.Request {
 	// Validate dimensions to avoid "affine transform is not invertible" error
 	if width <= 0 {
 		width = 400 // Default width
@@ -585,10 +582,8 @@ func (c *Client) AddTextBox(presentationId string, slideId string, text string, 
 		height = 100 // Default height
 	}
 
-	elementId := fmt.Sprintf("textbox_%s", generateId())
-
 	// Process markdown formatting (bold and italic)
-	processedText, formatRanges := c.processMarkdownText(text)
+	processedText, formatRanges := processMarkdownText(text)
 
 	requests := []*slides.Request{
 		{
@@ -629,6 +624,13 @@ func (c *Client) AddTextBox(presentationId string, slideId string, text string, 
 	// Skip text styling for now to avoid character counting issues
 	_ = formatRanges
 
+	return requests
+}
+
+func (c *Client) AddTextBox(presentationId string, slideId string, text string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+	elementId := fmt.Sprintf("textbox_%s", generateId())
+	requests := addTextBoxRequests(slideId, elementId, text, x, y, width, height)
+
 	req := &slides.BatchUpdatePresentationRequest{
 		Requests: requests,
 	}
@@ -646,7 +648,8 @@ func (c *Client) AddTextBox(presentationId string, slideId string, text string, 
 	return resp, nil
 }
 
-func (c *Client) AddCodeTextBox(presentationId string, slideId string, text string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+// addCodeTextBoxRequests builds the requests for a monospaced text box.
+func addCodeTextBoxRequests(slideId string, elementId string, text string, x, y, width, height float64) []*slides.Request {
 	// Validate dimensions
 	if width <= 0 {
 		width = 400
@@ -655,12 +658,10 @@ func (c *Client) AddCodeTextBox(presentationId string, slideId string, text stri
 		height = 100
 	}
 
-	elementId := fmt.Sprintf("codebox_%s", generateId())
-
 	// Remove markdown markers but don't apply formatting
-	processedText, _ := c.processMarkdownText(text)
+	processedText, _ := processMarkdownText(text)
 
-	requests := []*slides.Request{
+	return []*slides.Request{
 		{
 			CreateShape: &slides.CreateShapeRequest{
 				ObjectId:  elementId,
@@ -707,20 +708,16 @@ func (c *Client) AddCodeTextBox(presentationId string, slideId string, text stri
 			},
 		},
 	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
 }
 
-func (c *Client) AddImage(presentationId string, slideId string, imageUrl string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
-	elementId := fmt.Sprintf("image_%s", generateId())
+func (c *Client) AddCodeTextBox(presentationId string, slideId string, text string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+	elementId := fmt.Sprintf("codebox_%s", generateId())
+	return c.BatchUpdate(presentationId, addCodeTextBoxRequests(slideId, elementId, text, x, y, width, height))
+}
 
-	requests := []*slides.Request{
+// addImageRequests builds the request that places an image on a slide.
+func addImageRequests(slideId string, elementId string, imageUrl string, x, y, width, height float64) []*slides.Request {
+	return []*slides.Request{
 		{
 			CreateImage: &slides.CreateImageRequest{
 				ObjectId: elementId,
@@ -748,17 +745,16 @@ func (c *Client) AddImage(presentationId string, slideId string, imageUrl string
 			},
 		},
 	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
 }
 
-func (c *Client) AddTable(presentationId string, slideId string, rows, columns int, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+func (c *Client) AddImage(presentationId string, slideId string, imageUrl string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+	elementId := fmt.Sprintf("image_%s", generateId())
+	return c.BatchUpdate(presentationId, addImageRequests(slideId, elementId, imageUrl, x, y, width, height))
+}
+
+// addTableRequests builds the request that places a table on a slide. The
+// caller-supplied element ID lets cells be filled in the same batch.
+func addTableRequests(slideId string, elementId string, rows, columns int, x, y, width, height float64) []*slides.Request {
 	// Validate dimensions to avoid "affine transform is not invertible" error
 	if width <= 0 {
 		width = 400 // Default width
@@ -773,9 +769,7 @@ func (c *Client) AddTable(presentationId string, slideId string, rows, columns i
 		columns = 1
 	}
 
-	elementId := fmt.Sprintf("table_%s", generateId())
-
-	requests := []*slides.Request{
+	return []*slides.Request{
 		{
 			CreateTable: &slides.CreateTableRequest{
 				ObjectId: elementId,
@@ -804,17 +798,15 @@ func (c *Client) AddTable(presentationId string, slideId string, rows, columns i
 			},
 		},
 	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
 }
 
-func (c *Client) AddShape(presentationId string, slideId string, shapeType string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+func (c *Client) AddTable(presentationId string, slideId string, rows, columns int, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+	elementId := fmt.Sprintf("table_%s", generateId())
+	return c.BatchUpdate(presentationId, addTableRequests(slideId, elementId, rows, columns, x, y, width, height))
+}
+
+// addShapeRequests builds the request that places a shape on a slide.
+func addShapeRequests(slideId string, elementId string, shapeType string, x, y, width, height float64) []*slides.Request {
 	// Validate dimensions to avoid "affine transform is not invertible" error
 	if width <= 0 {
 		width = 100 // Default width
@@ -823,9 +815,7 @@ func (c *Client) AddShape(presentationId string, slideId string, shapeType strin
 		height = 100 // Default height
 	}
 
-	elementId := fmt.Sprintf("shape_%s", generateId())
-
-	requests := []*slides.Request{
+	return []*slides.Request{
 		{
 			CreateShape: &slides.CreateShapeRequest{
 				ObjectId:  elementId,
@@ -853,14 +843,11 @@ func (c *Client) AddShape(presentationId string, slideId string, shapeType strin
 			},
 		},
 	}
+}
 
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
+func (c *Client) AddShape(presentationId string, slideId string, shapeType string, x, y, width, height float64) (*slides.BatchUpdatePresentationResponse, error) {
+	elementId := fmt.Sprintf("shape_%s", generateId())
+	return c.BatchUpdate(presentationId, addShapeRequests(slideId, elementId, shapeType, x, y, width, height))
 }
 
 func (c *Client) ApplyTemplate(presentationId string, templateId string) (*slides.BatchUpdatePresentationResponse, error) {
@@ -901,9 +888,8 @@ func (c *Client) BatchUpdate(presentationId string, requests []*slides.Request) 
 	})
 }
 
-// InsertTextInTableCell inserts text into a specific table cell
-func (c *Client) InsertTextInTableCell(presentationId string, tableId string, row, col int, text string) (*slides.BatchUpdatePresentationResponse, error) {
-	requests := []*slides.Request{
+func insertTextInTableCellRequests(tableId string, row, col int, text string) []*slides.Request {
+	return []*slides.Request{
 		{
 			InsertText: &slides.InsertTextRequest{
 				ObjectId: tableId,
@@ -916,21 +902,21 @@ func (c *Client) InsertTextInTableCell(presentationId string, tableId string, ro
 			},
 		},
 	}
-
-	req := &slides.BatchUpdatePresentationRequest{
-		Requests: requests,
-	}
-
-	return doWithRetry(func() (*slides.BatchUpdatePresentationResponse, error) {
-		return c.service.Presentations.BatchUpdate(presentationId, req).Do()
-	})
 }
 
-// ApplyCodeFormattingToPlaceholder applies Courier New font to specific text ranges in a placeholder
-func (c *Client) ApplyCodeFormattingToPlaceholder(presentationId string, shapeId string, codeRanges []struct {
+// InsertTextInTableCell inserts text into a specific table cell
+func (c *Client) InsertTextInTableCell(presentationId string, tableId string, row, col int, text string) (*slides.BatchUpdatePresentationResponse, error) {
+	return c.BatchUpdate(presentationId, insertTextInTableCellRequests(tableId, row, col, text))
+}
+
+// codeRange is a half-open UTF-16 range within a shape's text that should be
+// rendered monospaced.
+type codeRange struct {
 	start int
 	end   int
-}) error {
+}
+
+func applyCodeFormattingRequests(shapeId string, codeRanges []codeRange) []*slides.Request {
 	var requests []*slides.Request
 
 	for _, cr := range codeRanges {
@@ -952,6 +938,20 @@ func (c *Client) ApplyCodeFormattingToPlaceholder(presentationId string, shapeId
 		})
 	}
 
+	return requests
+}
+
+// ApplyCodeFormattingToPlaceholder applies Courier New font to specific text ranges in a placeholder
+func (c *Client) ApplyCodeFormattingToPlaceholder(presentationId string, shapeId string, codeRanges []struct {
+	start int
+	end   int
+}) error {
+	converted := make([]codeRange, 0, len(codeRanges))
+	for _, cr := range codeRanges {
+		converted = append(converted, codeRange{start: cr.start, end: cr.end})
+	}
+
+	requests := applyCodeFormattingRequests(shapeId, converted)
 	if len(requests) == 0 {
 		return nil
 	}
