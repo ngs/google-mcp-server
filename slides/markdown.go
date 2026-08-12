@@ -313,8 +313,6 @@ func (mc *MarkdownConverter) estimateLineHeight(line string) float64 {
 }
 
 func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slides.Page, error) {
-	parsedSlides := mc.ParseMarkdown(markdown)
-
 	// Get current presentation to check existing slides
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
 	if err != nil {
@@ -330,6 +328,30 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 			log.Printf("[WARNING] Failed to delete first slide: %v\n", err)
 		}
 	}
+
+	if _, err := mc.appendSlidesFromMarkdown(markdown); err != nil {
+		return nil, err
+	}
+
+	// Return updated presentation slides
+	updatedPresentation, err := mc.client.GetPresentation(mc.presentationId)
+	if err != nil {
+		return nil, err
+	}
+
+	return updatedPresentation.Slides, nil
+}
+
+// appendSlidesFromMarkdown appends the slides described by markdown to the end
+// of the presentation and returns their IDs. It never deletes anything, so a
+// caller replacing a deck can keep the old slides until the new ones are
+// safely in place.
+//
+// On failure it returns the slides it did manage to create, so the caller can
+// clean them up rather than leaving them stranded in the presentation.
+func (mc *MarkdownConverter) appendSlidesFromMarkdown(markdown string) ([]string, error) {
+	parsedSlides := mc.ParseMarkdown(markdown)
+	createdSlideIds := make([]string, 0, len(parsedSlides))
 
 	// Get the TITLE_AND_BODY layout ID
 	layoutId, err := mc.client.GetLayoutId(mc.presentationId, "TITLE_AND_BODY")
@@ -409,15 +431,16 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to create slide %d: %w", i+1, err)
+			return createdSlideIds, fmt.Errorf("failed to create slide %d: %w", i+1, err)
 		}
 
 		var slideId string
 		if len(resp.Replies) > 0 && resp.Replies[0].CreateSlide != nil {
 			slideId = resp.Replies[0].CreateSlide.ObjectId
 		} else {
-			return nil, fmt.Errorf("failed to get slide ID for slide %d", i+1)
+			return createdSlideIds, fmt.Errorf("failed to get slide ID for slide %d", i+1)
 		}
+		createdSlideIds = append(createdSlideIds, slideId)
 
 		// Populate slide based on layout type and content
 		if useLayoutBased {
@@ -437,17 +460,11 @@ func (mc *MarkdownConverter) CreateSlidesFromMarkdown(markdown string) ([]*slide
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
+			return createdSlideIds, fmt.Errorf("failed to populate slide %d: %w", i+1, err)
 		}
 	}
 
-	// Return updated presentation slides
-	updatedPresentation, err := mc.client.GetPresentation(mc.presentationId)
-	if err != nil {
-		return nil, err
-	}
-
-	return updatedPresentation.Slides, nil
+	return createdSlideIds, nil
 }
 
 // populateSlideWithLayout populates a slide that uses a predefined layout
@@ -1107,24 +1124,60 @@ func (mc *MarkdownConverter) populateSlide(slideId string, slide MarkdownSlide) 
 	return nil
 }
 
+// UpdateSlidesFromMarkdown replaces the deck's contents with the slides
+// described by markdown.
+//
+// The new slides are appended first and the previous ones are removed only once
+// every new slide is in place. Deleting first, as this used to, meant that a
+// failure partway through the rebuild — a rate limit on a large deck, most
+// likely — left the user with an empty presentation and no way back.
 func (mc *MarkdownConverter) UpdateSlidesFromMarkdown(markdown string) error {
-	// Get current presentation
 	presentation, err := mc.client.GetPresentation(mc.presentationId)
 	if err != nil {
 		return err
 	}
 
-	// Delete all existing slides except the first one
-	if len(presentation.Slides) > 1 {
-		for i := 1; i < len(presentation.Slides); i++ {
-			_, err := mc.client.DeleteSlide(mc.presentationId, presentation.Slides[i].ObjectId)
-			if err != nil {
-				return err
-			}
+	obsoleteSlideIds := make([]string, 0, len(presentation.Slides))
+	for _, slide := range presentation.Slides {
+		obsoleteSlideIds = append(obsoleteSlideIds, slide.ObjectId)
+	}
+
+	createdSlideIds, err := mc.appendSlidesFromMarkdown(markdown)
+	if err != nil {
+		// Roll back the half-built replacement. Without this the user is left
+		// with their original deck plus a run of partial slides, and each retry
+		// strands another run.
+		mc.removePartialSlides(createdSlideIds)
+
+		return fmt.Errorf("failed to build the new slides, so the existing %d were left in place: %w",
+			len(obsoleteSlideIds), err)
+	}
+
+	// Removing every slide would leave a presentation the API cannot represent,
+	// and would discard the user's deck in exchange for nothing.
+	if len(createdSlideIds) == 0 {
+		return fmt.Errorf("markdown produced no slides, so the existing %d were left in place",
+			len(obsoleteSlideIds))
+	}
+
+	for _, slideId := range obsoleteSlideIds {
+		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
+			return fmt.Errorf("created %d new slides but failed to remove the previous slide %s: %w",
+				len(createdSlideIds), slideId, err)
 		}
 	}
 
-	// Create new slides from markdown
-	_, err = mc.CreateSlidesFromMarkdown(markdown)
-	return err
+	return nil
+}
+
+// removePartialSlides deletes slides left behind by a failed rebuild. It is
+// best effort: the caller is already returning the error that caused the
+// rollback, and a cleanup failure should not replace it.
+func (mc *MarkdownConverter) removePartialSlides(slideIds []string) {
+	for _, slideId := range slideIds {
+		if _, err := mc.client.DeleteSlide(mc.presentationId, slideId); err != nil {
+			log.Printf("[WARNING] Failed to remove partially built slide %s; it may need deleting by hand: %v\n",
+				slideId, err)
+		}
+	}
 }
