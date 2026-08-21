@@ -32,12 +32,17 @@ func TestDefaultSheetsToolsSchemas(t *testing.T) {
 		t.Errorf("Expected %d tools, got %d", len(required), len(tools))
 	}
 
+	seen := make(map[string]bool, len(tools))
 	for _, tool := range tools {
 		want, ok := required[tool.Name]
 		if !ok {
 			t.Errorf("Unexpected tool %s", tool.Name)
 			continue
 		}
+		if seen[tool.Name] {
+			t.Errorf("Tool %s is listed more than once", tool.Name)
+		}
+		seen[tool.Name] = true
 
 		got := make(map[string]bool, len(tool.InputSchema.Required))
 		for _, name := range tool.InputSchema.Required {
@@ -52,6 +57,12 @@ func TestDefaultSheetsToolsSchemas(t *testing.T) {
 			}
 		}
 	}
+
+	for name := range required {
+		if !seen[name] {
+			t.Errorf("Tool %s is missing from the registry", name)
+		}
+	}
 }
 
 // TestDestructiveToolsAreLabeled ensures destructive tools warn about data loss
@@ -63,12 +74,20 @@ func TestDestructiveToolsAreLabeled(t *testing.T) {
 		"sheets_values_clear":     true,
 	}
 
+	seen := make(map[string]bool, len(destructive))
 	for _, tool := range defaultSheetsTools() {
 		if !destructive[tool.Name] {
 			continue
 		}
+		seen[tool.Name] = true
 		if !strings.Contains(tool.Description, "Destructive") {
 			t.Errorf("Tool %s should be labeled as destructive, got %q", tool.Name, tool.Description)
+		}
+	}
+
+	for name := range destructive {
+		if !seen[name] {
+			t.Errorf("Tool %s is missing from the registry", name)
 		}
 	}
 }
@@ -76,13 +95,21 @@ func TestDestructiveToolsAreLabeled(t *testing.T) {
 // TestDimensionToolsUseEnum checks that the dimension parameter is constrained
 // to the values the API accepts.
 func TestDimensionToolsUseEnum(t *testing.T) {
+	seen := make(map[string]bool, 2)
 	for _, tool := range defaultSheetsTools() {
 		if tool.Name != "sheets_dimension_insert" && tool.Name != "sheets_dimension_delete" {
 			continue
 		}
+		seen[tool.Name] = true
 		enum := tool.InputSchema.Properties["dimension"].Enum
 		if len(enum) != 2 || enum[0] != "ROWS" || enum[1] != "COLUMNS" {
 			t.Errorf("Tool %s should constrain dimension to ROWS/COLUMNS, got %v", tool.Name, enum)
+		}
+	}
+
+	for _, name := range []string{"sheets_dimension_insert", "sheets_dimension_delete"} {
+		if !seen[name] {
+			t.Errorf("Tool %s is missing from the registry", name)
 		}
 	}
 }
@@ -136,6 +163,20 @@ func TestDimensionArgumentValidation(t *testing.T) {
 	}
 	if err := client.DeleteDimension("sheet", 0, "COLUMNS", 0, -1); err == nil {
 		t.Error("DeleteDimension should reject a negative count")
+	}
+	if err := client.InsertDimension("sheet", 0, "ROWS", 0, 1, true); err == nil {
+		t.Error("InsertDimension should reject inherit_from_before at start index 0")
+	}
+}
+
+// TestDefaultInheritFromBefore covers the inherit_from_before default: false at
+// index 0 (nothing precedes the insertion), true everywhere else.
+func TestDefaultInheritFromBefore(t *testing.T) {
+	if defaultInheritFromBefore(0) {
+		t.Error("defaultInheritFromBefore(0) should be false")
+	}
+	if !defaultInheritFromBefore(1) {
+		t.Error("defaultInheritFromBefore(1) should be true")
 	}
 }
 

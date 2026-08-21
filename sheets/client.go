@@ -94,6 +94,8 @@ func (c *Client) batchUpdate(spreadsheetID string, request *sheets.Request) (*sh
 func (c *Client) DuplicateSheet(spreadsheetID string, sheetID int64, newName string, insertIndex *int64) (*sheets.SheetProperties, error) {
 	request := &sheets.DuplicateSheetRequest{
 		SourceSheetId: sheetID,
+		// SourceSheetId may legitimately be 0 (the default sheet)
+		ForceSendFields: []string{"SourceSheetId"},
 	}
 	if newName != "" {
 		request.NewSheetName = newName
@@ -167,7 +169,11 @@ func (c *Client) AddSheet(spreadsheetID, title string, index *int64, rowCount, c
 // DeleteSheet deletes a sheet (tab) from a spreadsheet. This is destructive.
 func (c *Client) DeleteSheet(spreadsheetID string, sheetID int64) error {
 	_, err := c.batchUpdate(spreadsheetID, &sheets.Request{
-		DeleteSheet: &sheets.DeleteSheetRequest{SheetId: sheetID},
+		DeleteSheet: &sheets.DeleteSheetRequest{
+			SheetId: sheetID,
+			// SheetId may legitimately be 0 (the default sheet)
+			ForceSendFields: []string{"SheetId"},
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("failed to delete sheet: %w", err)
@@ -180,6 +186,8 @@ func (c *Client) DeleteSheet(spreadsheetID string, sheetID int64) error {
 func (c *Client) UpdateSheetProperties(spreadsheetID string, sheetID int64, newTitle *string, newIndex *int64, hidden *bool) (*sheets.SheetProperties, error) {
 	properties := &sheets.SheetProperties{
 		SheetId: sheetID,
+		// SheetId may legitimately be 0 (the default sheet)
+		ForceSendFields: []string{"SheetId"},
 	}
 
 	var fields []string
@@ -239,15 +247,19 @@ func (c *Client) InsertDimension(spreadsheetID string, sheetID int64, dimension 
 	if startIndex < 0 {
 		return fmt.Errorf("invalid start_index: must be 0 or greater")
 	}
+	if inheritFromBefore && startIndex == 0 {
+		return fmt.Errorf("invalid inherit_from_before: must be false when start_index is 0 because there is no preceding row or column")
+	}
 
 	_, err := c.batchUpdate(spreadsheetID, &sheets.Request{
 		InsertDimension: &sheets.InsertDimensionRequest{
 			Range: &sheets.DimensionRange{
-				SheetId:         sheetID,
-				Dimension:       dimension,
-				StartIndex:      startIndex,
-				EndIndex:        startIndex + count,
-				ForceSendFields: []string{"StartIndex"},
+				SheetId:    sheetID,
+				Dimension:  dimension,
+				StartIndex: startIndex,
+				EndIndex:   startIndex + count,
+				// SheetId may legitimately be 0 (the default sheet)
+				ForceSendFields: []string{"SheetId", "StartIndex"},
 			},
 			InheritFromBefore: inheritFromBefore,
 			ForceSendFields:   []string{"InheritFromBefore"},
@@ -274,11 +286,12 @@ func (c *Client) DeleteDimension(spreadsheetID string, sheetID int64, dimension 
 	_, err := c.batchUpdate(spreadsheetID, &sheets.Request{
 		DeleteDimension: &sheets.DeleteDimensionRequest{
 			Range: &sheets.DimensionRange{
-				SheetId:         sheetID,
-				Dimension:       dimension,
-				StartIndex:      startIndex,
-				EndIndex:        startIndex + count,
-				ForceSendFields: []string{"StartIndex"},
+				SheetId:    sheetID,
+				Dimension:  dimension,
+				StartIndex: startIndex,
+				EndIndex:   startIndex + count,
+				// SheetId may legitimately be 0 (the default sheet)
+				ForceSendFields: []string{"SheetId", "StartIndex"},
 			},
 		},
 	})
@@ -286,6 +299,13 @@ func (c *Client) DeleteDimension(spreadsheetID string, sheetID int64, dimension 
 		return fmt.Errorf("failed to delete dimension: %w", err)
 	}
 	return nil
+}
+
+// defaultInheritFromBefore picks the inherit_from_before default for an
+// insertion: true in general, but false at index 0 where the API rejects
+// inheriting because no preceding dimension exists.
+func defaultInheritFromBefore(startIndex int64) bool {
+	return startIndex > 0
 }
 
 // validateDimension checks that a dimension is one of the values accepted by the API

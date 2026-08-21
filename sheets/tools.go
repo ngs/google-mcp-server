@@ -238,7 +238,7 @@ func defaultSheetsTools() []server.Tool {
 					},
 					"inherit_from_before": {
 						Type:        "boolean",
-						Description: "Inherit formatting from the preceding row or column (optional, defaults to true)",
+						Description: "Inherit formatting from the preceding row or column (optional; defaults to true, except at start_index 0 where it defaults to and must be false because no preceding row or column exists)",
 					},
 				},
 				Required: []string{"spreadsheet_id", "sheet_id", "dimension", "start_index", "count"},
@@ -528,8 +528,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 
-		// inherit_from_before defaults to true
-		inheritFromBefore := true
+		inheritFromBefore := defaultInheritFromBefore(args.StartIndex)
 		if args.InheritFromBefore != nil {
 			inheritFromBefore = *args.InheritFromBefore
 		}
