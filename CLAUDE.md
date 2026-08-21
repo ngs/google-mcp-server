@@ -44,7 +44,7 @@ go build -o google-mcp-server .
 - **Account Management** (`accounts/`): 5 tools for managing multiple Google accounts
 
 ### Basic Implementation
-- **Sheets Service** (`sheets/`): 3 basic tools (get/update values, get spreadsheet)
+- **Sheets Service** (`sheets/`): 12 tools (spreadsheet create/get, values get/update/append/clear, sheet duplicate/add/delete/update, dimension insert/delete) + multi-account support via `sheets/multi_account.go`
 - **Docs Service** (`docs/`): 3 basic tools (get/create/update documents)
 
 ## Common Tasks

@@ -35,7 +35,20 @@ func TestGetToolsWithoutDefaultClient(t *testing.T) {
 	for _, tool := range tools {
 		byName[tool.Name] = true
 	}
-	for _, name := range []string{"sheets_spreadsheet_get", "sheets_values_get", "sheets_values_update"} {
+	for _, name := range []string{
+		"sheets_spreadsheet_create",
+		"sheets_spreadsheet_get",
+		"sheets_values_get",
+		"sheets_values_update",
+		"sheets_values_append",
+		"sheets_values_clear",
+		"sheets_sheet_duplicate",
+		"sheets_sheet_add",
+		"sheets_sheet_delete",
+		"sheets_sheet_update",
+		"sheets_dimension_insert",
+		"sheets_dimension_delete",
+	} {
 		if !byName[name] {
 			t.Errorf("Expected tool %s to be listed", name)
 		}
