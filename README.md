@@ -173,10 +173,20 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 - `gmail_message_get` - Get email details (supports `account` parameter)
 
 ### Google Sheets
+- `sheets_spreadsheet_create` - Create a new spreadsheet
 - `sheets_spreadsheet_get` - Get spreadsheet metadata
 - `sheets_values_get` - Get cell values
 - `sheets_values_update` - Update cell values
-- (Additional tools in full implementation)
+- `sheets_values_append` - Append rows after the last row of data in a range
+- `sheets_values_clear` - Clear the values in a range (destructive)
+- `sheets_sheet_duplicate` - Duplicate a sheet (tab) within a spreadsheet
+- `sheets_sheet_add` - Add a new sheet (tab) to a spreadsheet
+- `sheets_sheet_delete` - Delete a sheet (tab) from a spreadsheet (destructive)
+- `sheets_sheet_update` - Update sheet properties (title, position, visibility)
+- `sheets_dimension_insert` - Insert rows or columns into a sheet
+- `sheets_dimension_delete` - Delete rows or columns from a sheet (destructive)
+
+All Sheets tools support the `account` parameter.
 
 ### Google Docs
 - `docs_document_get` - Get document content
