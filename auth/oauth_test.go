@@ -121,10 +121,13 @@ func TestOAuthClientConstructors(t *testing.T) {
 		name        string
 		interactive bool
 		withToken   bool
+		malformed   bool
 		wantErr     bool
+		errContains string
 	}{
 		{name: "non-interactive with token", interactive: false, withToken: true},
-		{name: "non-interactive without token", interactive: false, withToken: false, wantErr: true},
+		{name: "non-interactive without token", interactive: false, withToken: false, wantErr: true, errContains: "no stored token"},
+		{name: "non-interactive with malformed token", interactive: false, malformed: true, wantErr: true, errContains: "failed to load stored token"},
 		{name: "interactive with token", interactive: true, withToken: true},
 	}
 
@@ -134,6 +137,11 @@ func TestOAuthClientConstructors(t *testing.T) {
 			tokenFile := filepath.Join(tempDir, "token.json")
 			if tt.withToken {
 				tokenFile = writeTestToken(t, tempDir)
+			}
+			if tt.malformed {
+				if err := os.WriteFile(tokenFile, []byte("{not json"), 0600); err != nil {
+					t.Fatalf("Failed to write malformed token file: %v", err)
+				}
 			}
 
 			config := OAuthConfig{
@@ -159,6 +167,9 @@ func TestOAuthClientConstructors(t *testing.T) {
 				}
 				if !strings.Contains(err.Error(), tokenFile) {
 					t.Errorf("Expected the error to mention the token file %s, got %v", tokenFile, err)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Expected the error to contain %q, got %v", tt.errContains, err)
 				}
 				if client != nil {
 					t.Error("Expected a nil client alongside the error")

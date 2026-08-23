@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -91,7 +92,8 @@ func newOAuthClient(ctx context.Context, config OAuthConfig, allowInteractive bo
 	}
 
 	// Try to load existing token
-	if err := client.loadToken(); err == nil && client.token != nil {
+	loadErr := client.loadToken()
+	if loadErr == nil && client.token != nil {
 		// Token loaded successfully, create HTTP client
 		client.httpClient = oauthConfig.Client(ctx, client.token)
 		client.startTokenRefresh(ctx)
@@ -101,6 +103,11 @@ func newOAuthClient(ctx context.Context, config OAuthConfig, allowInteractive bo
 	// No valid token. Authenticating means opening a browser and waiting on a
 	// loopback callback, which never completes in a headless environment.
 	if !allowInteractive {
+		// A missing file is the expected "never set up" case; anything else
+		// (unreadable or malformed file) is worth surfacing as the cause.
+		if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("failed to load stored token at %s and interactive authentication is disabled: %w", config.TokenFile, loadErr)
+		}
 		return nil, fmt.Errorf("no stored token at %s and interactive authentication is disabled", config.TokenFile)
 	}
 
