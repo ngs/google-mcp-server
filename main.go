@@ -54,11 +54,20 @@ func main() {
 	}
 	log.Printf("[INFO] Account manager initialized with %d accounts\n", len(accountManager.ListAccounts()))
 
-	// For backward compatibility, create a default OAuth client
-	oauthClient, err := auth.NewOAuthClient(ctx, cfg.OAuth)
+	// For backward compatibility, create a default OAuth client from the legacy
+	// single-account token. Once at least one account is registered the server
+	// can run without it, so the interactive browser flow must not start there:
+	// it would block a headless process before it serves any MCP request. With
+	// no accounts at all this is still the first-run setup path.
+	var oauthClient *auth.OAuthClient
+	if len(accountManager.ListAccounts()) > 0 {
+		oauthClient, err = auth.NewOAuthClientNonInteractive(ctx, cfg.OAuth)
+	} else {
+		oauthClient, err = auth.NewOAuthClient(ctx, cfg.OAuth)
+	}
 	if err != nil {
 		// Don't fail if no default client - multi-account mode
-		log.Printf("[INFO] No default OAuth client, using multi-account mode\n")
+		log.Printf("[INFO] No default OAuth client, using multi-account mode: %v\n", err)
 		oauthClient = nil
 	}
 

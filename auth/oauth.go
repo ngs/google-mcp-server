@@ -39,8 +39,21 @@ type OAuthConfig struct {
 	Scopes       []string `json:"scopes"`
 }
 
-// NewOAuthClient creates a new OAuth client
+// NewOAuthClient creates a new OAuth client, falling back to the interactive
+// browser flow when no usable token is stored.
 func NewOAuthClient(ctx context.Context, config OAuthConfig) (*OAuthClient, error) {
+	return newOAuthClient(ctx, config, true)
+}
+
+// NewOAuthClientNonInteractive creates a new OAuth client from a stored token
+// only. When no usable token exists it returns an error instead of starting the
+// browser flow, so callers that have another way to authenticate (multi-account
+// tokens) can fall back without blocking a headless process.
+func NewOAuthClientNonInteractive(ctx context.Context, config OAuthConfig) (*OAuthClient, error) {
+	return newOAuthClient(ctx, config, false)
+}
+
+func newOAuthClient(ctx context.Context, config OAuthConfig, allowInteractive bool) (*OAuthClient, error) {
 	if config.ClientID == "" || config.ClientSecret == "" {
 		return nil, fmt.Errorf("client ID and client secret are required")
 	}
@@ -85,7 +98,12 @@ func NewOAuthClient(ctx context.Context, config OAuthConfig) (*OAuthClient, erro
 		return client, nil
 	}
 
-	// No valid token, need to authenticate
+	// No valid token. Authenticating means opening a browser and waiting on a
+	// loopback callback, which never completes in a headless environment.
+	if !allowInteractive {
+		return nil, fmt.Errorf("no stored token at %s and interactive authentication is disabled", config.TokenFile)
+	}
+
 	if err := client.authenticate(ctx); err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
