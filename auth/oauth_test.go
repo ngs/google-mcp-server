@@ -2,13 +2,16 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -84,6 +87,131 @@ func TestNewOAuthClientWithoutAuth(t *testing.T) {
 	_, err := NewOAuthClient(ctx, config)
 	if err == nil {
 		t.Error("Expected error with empty credentials")
+	}
+}
+
+// writeTestToken writes a token file that loadToken accepts and returns its path.
+func writeTestToken(t *testing.T, dir string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, "token.json")
+	token := &oauth2.Token{
+		AccessToken:  "test-access-token",
+		RefreshToken: "test-refresh-token",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(time.Hour),
+	}
+
+	data, err := json.Marshal(token)
+	if err != nil {
+		t.Fatalf("Failed to marshal token: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatalf("Failed to write token file: %v", err)
+	}
+
+	return path
+}
+
+// TestOAuthClientConstructors covers the interactive/non-interactive split.
+// Only cases with a stored token may use the interactive constructor: a missing
+// token there would open a browser and block.
+func TestOAuthClientConstructors(t *testing.T) {
+	tests := []struct {
+		name        string
+		interactive bool
+		withToken   bool
+		malformed   bool
+		wantErr     bool
+		errContains string
+	}{
+		{name: "non-interactive with token", interactive: false, withToken: true},
+		{name: "non-interactive without token", interactive: false, withToken: false, wantErr: true, errContains: "no stored token"},
+		{name: "non-interactive with malformed token", interactive: false, malformed: true, wantErr: true, errContains: "failed to load stored token"},
+		{name: "interactive with token", interactive: true, withToken: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			tokenFile := filepath.Join(tempDir, "token.json")
+			if tt.withToken {
+				tokenFile = writeTestToken(t, tempDir)
+			}
+			if tt.malformed {
+				if err := os.WriteFile(tokenFile, []byte("{not json"), 0600); err != nil {
+					t.Fatalf("Failed to write malformed token file: %v", err)
+				}
+			}
+
+			config := OAuthConfig{
+				ClientID:     "test-client-id",
+				ClientSecret: "test-client-secret",
+				TokenFile:    tokenFile,
+			}
+
+			ctx := context.Background()
+			var (
+				client *OAuthClient
+				err    error
+			)
+			if tt.interactive {
+				client, err = NewOAuthClient(ctx, config)
+			} else {
+				client, err = NewOAuthClientNonInteractive(ctx, config)
+			}
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("Expected an error, got nil")
+				}
+				if !strings.Contains(err.Error(), tokenFile) {
+					t.Errorf("Expected the error to mention the token file %s, got %v", tokenFile, err)
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("Expected the error to contain %q, got %v", tt.errContains, err)
+				}
+				if client != nil {
+					t.Error("Expected a nil client alongside the error")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if client == nil {
+				t.Fatal("Expected a client, got nil")
+			}
+			if client.GetHTTPClient() == nil {
+				t.Error("Expected an authenticated HTTP client")
+			}
+		})
+	}
+}
+
+// TestNewOAuthClientNonInteractiveDoesNotBlock guards the headless startup path:
+// a missing token must fail immediately rather than wait on a browser callback.
+func TestNewOAuthClientNonInteractiveDoesNotBlock(t *testing.T) {
+	config := OAuthConfig{
+		ClientID:     "test-client-id",
+		ClientSecret: "test-client-secret",
+		TokenFile:    filepath.Join(t.TempDir(), "missing-token.json"),
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewOAuthClientNonInteractive(context.Background(), config)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("Expected an error for a missing token file")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NewOAuthClientNonInteractive blocked with no stored token")
 	}
 }
 
