@@ -58,6 +58,9 @@ func TestParseA1Range(t *testing.T) {
 		{"bare quoted title", "'Sheet 1'", "Sheet 1", unset(), unset(), unset(), unset()},
 		{"bare japanese title", "日本語シート", "日本語シート", unset(), unset(), unset(), unset()},
 		{"bare title with escaped quote", "'It''s a sheet'", "It's a sheet", unset(), unset(), unset(), unset()},
+		// Spaces inside the quotes are part of the name and must survive
+		{"bare quoted title with edge spaces", "' Budget '", " Budget ", unset(), unset(), unset(), unset()},
+		{"qualified quoted title with edge spaces", "' Budget '!A1", " Budget ", idx(0), idx(1), idx(0), idx(1)},
 		{"three letter column still parses", "Sheet1!ZZZ1", "Sheet1", idx(0), idx(1), idx(18277), idx(18278)},
 		// A "!" inside a quoted title is part of the name, not the separator
 		{"bare quoted title containing a bang", "'Data!Sheet'", "Data!Sheet", unset(), unset(), unset(), unset()},
@@ -219,6 +222,9 @@ func TestParseColorErrors(t *testing.T) {
 		`"#FFFF"`,
 		`{"red":2}`,
 		`"blue"`,
+		// Sheets does not generally honour alpha in a colour style, so the
+		// input does not pretend to accept it
+		`{"red":1,"alpha":0.5}`,
 	} {
 		if _, err := parseColor(json.RawMessage(input)); err == nil {
 			t.Errorf("parseColor(%s) should have returned an error", input)

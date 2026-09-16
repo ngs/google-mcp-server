@@ -128,11 +128,12 @@ func parseHexColor(hex string) (*sheets.Color, error) {
 // parseColorObject converts {red, green, blue, alpha} into an API color. Every
 // component is optional and defaults to 0.
 func parseColorObject(raw json.RawMessage) (*sheets.Color, error) {
+	// Alpha is deliberately absent: Sheets does not generally honour it in a
+	// colour style, so accepting it would promise something it does not do
 	var object struct {
 		Red   *float64 `json:"red"`
 		Green *float64 `json:"green"`
 		Blue  *float64 `json:"blue"`
-		Alpha *float64 `json:"alpha"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
@@ -151,7 +152,6 @@ func parseColorObject(raw json.RawMessage) (*sheets.Color, error) {
 		{"red", object.Red, &color.Red},
 		{"green", object.Green, &color.Green},
 		{"blue", object.Blue, &color.Blue},
-		{"alpha", object.Alpha, &color.Alpha},
 	} {
 		if component.value == nil {
 			continue
@@ -161,10 +161,6 @@ func parseColorObject(raw json.RawMessage) (*sheets.Color, error) {
 		}
 		*component.into = *component.value
 	}
-	if object.Alpha != nil {
-		color.ForceSendFields = append(color.ForceSendFields, "Alpha")
-	}
-
 	return color, nil
 }
 
@@ -293,10 +289,12 @@ func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 	// title, which is A1 notation for the whole sheet
 	if !qualified {
 		if bare := strings.TrimSpace(a1); bare != "" && !looksLikeCellRange(bare) {
-			bareTitle := strings.TrimSpace(unquoteSheetTitle(bare))
+			// Unquote without trimming again: whitespace outside the quotes is
+			// already gone, and whitespace inside them is part of the name
+			bareTitle := unquoteSheetTitle(bare)
 			// An empty title would select the first sheet, so a typo such as
 			// "''" would repaint a whole sheet. Reject it like "!A1" is
-			if bareTitle == "" {
+			if strings.TrimSpace(bareTitle) == "" {
 				return "", nil, fmt.Errorf("invalid range: %q (the sheet title is empty)", a1)
 			}
 			return bareTitle, &sheets.GridRange{}, nil
@@ -558,7 +556,6 @@ func colorProperty(description string) server.Property {
 					"red":   component,
 					"green": component,
 					"blue":  component,
-					"alpha": component,
 				},
 			},
 		},
