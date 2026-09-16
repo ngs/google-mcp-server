@@ -565,8 +565,15 @@ func colorProperty(description string) server.Property {
 // readFormatFieldMask limits the spreadsheets.get response to cell formatting.
 // Grid data would otherwise carry the cell values too, which this tool has no
 // reason to read.
+//
+// It asks for userEnteredFormat, the formatting set on the cell itself, rather
+// than effectiveFormat, the resolved one. Sheets fills the resolved format with
+// defaults such as a white background and a default font size, so reading it
+// would report those defaults on every cell instead of omitting what was never
+// set. Asking for what the cell carries also mirrors what sheets_cells_format
+// writes, so a read confirms a write property for property.
 const readFormatFieldMask = "sheets(properties(sheetId,title)," +
-	"data(startRow,startColumn,rowData(values(effectiveFormat))))"
+	"data(startRow,startColumn,rowData(values(userEnteredFormat))))"
 
 // maxReadFormatCells caps how many cells one read returns, so a whole-column
 // range cannot produce an unreadable response.
@@ -596,6 +603,11 @@ func colorStyleToHex(style *sheets.ColorStyle) string {
 
 // summarizeCellFormat renders the formatting of one cell, leaving out anything
 // that is not set so an unstyled cell reports nothing at all.
+//
+// It describes only what the cell itself carries. Formatting inherited from the
+// sheet, or applied by a conditional format rule, is not reported. A bold or
+// italic style that was explicitly turned off reads the same as one that was
+// never set, because the API omits both.
 func summarizeCellFormat(format *sheets.CellFormat) map[string]interface{} {
 	summary := map[string]interface{}{}
 	if format == nil {
@@ -642,7 +654,7 @@ func summarizeGridData(grid *sheets.GridData) []interface{} {
 	for _, row := range grid.RowData {
 		cells := make([]interface{}, 0, len(row.Values))
 		for _, cell := range row.Values {
-			cells = append(cells, summarizeCellFormat(cell.EffectiveFormat))
+			cells = append(cells, summarizeCellFormat(cell.UserEnteredFormat))
 		}
 		rows = append(rows, cells)
 	}
