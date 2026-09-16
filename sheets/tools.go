@@ -389,6 +389,27 @@ func defaultSheetsTools() []server.Tool {
 				Required: []string{"spreadsheet_id", "range"},
 			},
 		},
+
+		{
+			Name: "sheets_cells_get_format",
+			Description: "Read the formatting of a range (background color, text style, alignment, number format). " +
+				"Only formatting is returned; cell values are not read",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"spreadsheet_id": {
+						Type:        "string",
+						Description: "Spreadsheet ID",
+					},
+					"range": {
+						Type: "string",
+						Description: "A1 notation range to read. Include the sheet title when the spreadsheet has " +
+							"more than one sheet; without it the first sheet is used",
+					},
+				},
+				Required: []string{"spreadsheet_id", "range"},
+			},
+		},
 	}
 }
 
@@ -721,6 +742,51 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			"range":         formatGridRange(gridRange),
 			"fields":        fields,
 		}, nil
+
+	case "sheets_cells_get_format":
+		var args struct {
+			SpreadsheetID string `json:"spreadsheet_id"`
+			Range         string `json:"range"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if args.Range == "" {
+			return nil, fmt.Errorf("invalid arguments: range is required")
+		}
+
+		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, args.Range)
+		if err != nil {
+			return nil, err
+		}
+		if len(spreadsheet.Sheets) == 0 || len(spreadsheet.Sheets[0].Data) == 0 {
+			return nil, fmt.Errorf("no grid data returned for range %q", args.Range)
+		}
+
+		sheet := spreadsheet.Sheets[0]
+		grid := sheet.Data[0]
+
+		cellCount := 0
+		for _, row := range grid.RowData {
+			cellCount += len(row.Values)
+		}
+		if cellCount > maxReadFormatCells {
+			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool returns at once; read a smaller range",
+				args.Range, cellCount, maxReadFormatCells)
+		}
+
+		result := map[string]interface{}{
+			"spreadsheetId": args.SpreadsheetID,
+			"range":         args.Range,
+			"startRow":      grid.StartRow,
+			"startColumn":   grid.StartColumn,
+			"cells":         summarizeGridData(grid),
+		}
+		if sheet.Properties != nil {
+			result["sheetId"] = sheet.Properties.SheetId
+			result["sheetTitle"] = sheet.Properties.Title
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)

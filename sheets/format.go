@@ -3,6 +3,7 @@ package sheets
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -536,4 +537,87 @@ func colorProperty(description string) server.Property {
 			},
 		},
 	}
+}
+
+// readFormatFieldMask limits the spreadsheets.get response to cell formatting.
+// Grid data would otherwise carry the cell values too, which this tool has no
+// reason to read.
+const readFormatFieldMask = "sheets.properties.sheetId,sheets.properties.title," +
+	"sheets.data.startRow,sheets.data.startColumn,sheets.data.rowData.values.effectiveFormat"
+
+// maxReadFormatCells caps how many cells one read returns, so a whole-column
+// range cannot produce an unreadable response.
+const maxReadFormatCells = 2000
+
+// colorStyleToHex renders a color as #RRGGBB. It returns an empty string for a
+// theme color or a missing value, which have no literal rgb components.
+func colorStyleToHex(style *sheets.ColorStyle) string {
+	if style == nil || style.RgbColor == nil {
+		return ""
+	}
+
+	component := func(value float64) int {
+		scaled := int(math.Round(value * 255))
+		if scaled < 0 {
+			return 0
+		}
+		if scaled > 255 {
+			return 255
+		}
+		return scaled
+	}
+
+	rgb := style.RgbColor
+	return fmt.Sprintf("#%02X%02X%02X", component(rgb.Red), component(rgb.Green), component(rgb.Blue))
+}
+
+// summarizeCellFormat renders the formatting of one cell, leaving out anything
+// that is not set so an unstyled cell reports nothing at all.
+func summarizeCellFormat(format *sheets.CellFormat) map[string]interface{} {
+	summary := map[string]interface{}{}
+	if format == nil {
+		return summary
+	}
+
+	if hex := colorStyleToHex(format.BackgroundColorStyle); hex != "" {
+		summary["backgroundColor"] = hex
+	}
+	if format.HorizontalAlignment != "" {
+		summary["horizontalAlignment"] = format.HorizontalAlignment
+	}
+	if format.NumberFormat != nil && (format.NumberFormat.Type != "" || format.NumberFormat.Pattern != "") {
+		summary["numberFormat"] = map[string]interface{}{
+			"type":    format.NumberFormat.Type,
+			"pattern": format.NumberFormat.Pattern,
+		}
+	}
+	if text := format.TextFormat; text != nil {
+		if text.Bold {
+			summary["bold"] = true
+		}
+		if text.Italic {
+			summary["italic"] = true
+		}
+		if text.FontSize != 0 {
+			summary["fontSize"] = text.FontSize
+		}
+		if hex := colorStyleToHex(text.ForegroundColorStyle); hex != "" {
+			summary["foregroundColor"] = hex
+		}
+	}
+
+	return summary
+}
+
+// summarizeGridData renders the formatting of a returned grid, row by row.
+func summarizeGridData(grid *sheets.GridData) []interface{} {
+	rows := make([]interface{}, 0, len(grid.RowData))
+	for _, row := range grid.RowData {
+		cells := make([]interface{}, 0, len(row.Values))
+		for _, cell := range row.Values {
+			cells = append(cells, summarizeCellFormat(cell.EffectiveFormat))
+		}
+		rows = append(rows, cells)
+	}
+	return rows
 }

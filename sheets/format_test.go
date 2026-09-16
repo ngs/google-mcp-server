@@ -392,3 +392,94 @@ func TestFormatCellsRejectsUnsafeRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestColorStyleToHex(t *testing.T) {
+	tests := []struct {
+		name  string
+		input json.RawMessage
+		want  string
+	}{
+		{"light yellow", json.RawMessage(`"#FFF299"`), "#FFF299"},
+		{"black", json.RawMessage(`"#000000"`), "#000000"},
+		{"white", json.RawMessage(`"#FFFFFF"`), "#FFFFFF"},
+		{"shorthand expands", json.RawMessage(`"#FC9"`), "#FFCC99"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			color, err := parseColor(tt.input)
+			if err != nil {
+				t.Fatalf("parseColor returned an error: %v", err)
+			}
+			if got := colorStyleToHex(&sheets.ColorStyle{RgbColor: color}); got != tt.want {
+				t.Errorf("colorStyleToHex = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	if got := colorStyleToHex(nil); got != "" {
+		t.Errorf("colorStyleToHex(nil) = %q, want an empty string", got)
+	}
+	if got := colorStyleToHex(&sheets.ColorStyle{ThemeColor: "ACCENT1"}); got != "" {
+		t.Errorf("a theme color has no rgb value, got %q", got)
+	}
+}
+
+// TestSummarizeCellFormatOmitsUnsetFields keeps the read response small: a cell
+// with no styling of its own reports nothing rather than a row of defaults.
+func TestSummarizeCellFormatOmitsUnsetFields(t *testing.T) {
+	if got := summarizeCellFormat(nil); len(got) != 0 {
+		t.Errorf("a nil format should summarize to nothing, got %v", got)
+	}
+	if got := summarizeCellFormat(&sheets.CellFormat{}); len(got) != 0 {
+		t.Errorf("an empty format should summarize to nothing, got %v", got)
+	}
+
+	color, err := parseColor(json.RawMessage(`"#FFF299"`))
+	if err != nil {
+		t.Fatalf("parseColor returned an error: %v", err)
+	}
+	got := summarizeCellFormat(&sheets.CellFormat{
+		BackgroundColorStyle: &sheets.ColorStyle{RgbColor: color},
+		HorizontalAlignment:  "CENTER",
+		TextFormat:           &sheets.TextFormat{Bold: true, FontSize: 12},
+		NumberFormat:         &sheets.NumberFormat{Type: "CURRENCY", Pattern: "#,##0"},
+	})
+
+	if got["backgroundColor"] != "#FFF299" {
+		t.Errorf("backgroundColor = %v, want #FFF299", got["backgroundColor"])
+	}
+	if got["horizontalAlignment"] != "CENTER" {
+		t.Errorf("horizontalAlignment = %v, want CENTER", got["horizontalAlignment"])
+	}
+	if got["bold"] != true {
+		t.Errorf("bold = %v, want true", got["bold"])
+	}
+	if got["fontSize"] != int64(12) {
+		t.Errorf("fontSize = %v, want 12", got["fontSize"])
+	}
+	numberFormat, ok := got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if numberFormat["type"] != "CURRENCY" || numberFormat["pattern"] != "#,##0" {
+		t.Errorf("unexpected number format: %v", numberFormat)
+	}
+	// italic was never set, so it must not appear at all
+	if _, ok := got["italic"]; ok {
+		t.Errorf("italic should be absent, got %v", got)
+	}
+}
+
+// TestReadFormatFieldMaskStaysOnFormatting is the read-side counterpart of the
+// write guarantee: the request must not ask for cell values.
+func TestReadFormatFieldMaskStaysOnFormatting(t *testing.T) {
+	for _, forbidden := range []string{"userEnteredValue", "formattedValue", "effectiveValue", "values.userEntered"} {
+		if strings.Contains(readFormatFieldMask, forbidden) {
+			t.Errorf("the read field mask should not request %s, got %q", forbidden, readFormatFieldMask)
+		}
+	}
+	if !strings.Contains(readFormatFieldMask, "effectiveFormat") {
+		t.Errorf("the read field mask should request effectiveFormat, got %q", readFormatFieldMask)
+	}
+}
