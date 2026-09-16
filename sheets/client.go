@@ -439,14 +439,7 @@ func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, 
 		return fmt.Errorf("invalid fields mask: %q (must be scoped to userEnteredFormat)", fields)
 	}
 
-	_, err := c.batchUpdate(spreadsheetID, &sheets.Request{
-		RepeatCell: &sheets.RepeatCellRequest{
-			Range:  gridRange,
-			Cell:   cell,
-			Fields: fields,
-		},
-	})
-	if err != nil {
+	if _, err := c.batchUpdate(spreadsheetID, repeatCellRequest(gridRange, cell, fields)); err != nil {
 		return fmt.Errorf("failed to format cells: %w", err)
 	}
 	return nil
