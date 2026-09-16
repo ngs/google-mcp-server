@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"go.ngs.io/google-mcp-server/config"
@@ -82,5 +84,47 @@ func TestResource(t *testing.T) {
 
 	if resource.MimeType != "application/json" {
 		t.Errorf("Expected MIME type to be 'application/json', got %s", resource.MimeType)
+	}
+}
+
+// TestPropertyOmitsEmptyNestedFields makes sure the nested object support does
+// not change the JSON emitted for the properties that do not use it.
+func TestPropertyOmitsEmptyNestedFields(t *testing.T) {
+	encoded, err := json.Marshal(Property{
+		Type:        "string",
+		Description: "Spreadsheet ID",
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal property: %v", err)
+	}
+
+	got := string(encoded)
+	for _, key := range []string{"properties", "required", "items", "enum"} {
+		if strings.Contains(got, key) {
+			t.Errorf("Property JSON should not contain %q, got %s", key, got)
+		}
+	}
+}
+
+// TestPropertyEncodesNestedObject covers a property that declares its own
+// object schema, as the cell formatting tool does.
+func TestPropertyEncodesNestedObject(t *testing.T) {
+	encoded, err := json.Marshal(Property{
+		Type:        "object",
+		Description: "Text style",
+		Properties: map[string]Property{
+			"bold": {Type: "boolean", Description: "Bold text"},
+		},
+		Required: []string{"bold"},
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal property: %v", err)
+	}
+
+	got := string(encoded)
+	for _, want := range []string{`"properties"`, `"bold"`, `"required":["bold"]`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Property JSON should contain %s, got %s", want, got)
+		}
 	}
 }

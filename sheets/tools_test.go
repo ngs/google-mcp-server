@@ -25,6 +25,7 @@ func TestDefaultSheetsToolsSchemas(t *testing.T) {
 		"sheets_sheet_update":       {"spreadsheet_id", "sheet_id"},
 		"sheets_dimension_insert":   {"spreadsheet_id", "sheet_id", "dimension", "start_index", "count"},
 		"sheets_dimension_delete":   {"spreadsheet_id", "sheet_id", "dimension", "start_index", "count"},
+		"sheets_cells_format":       {"spreadsheet_id", "range"},
 	}
 
 	tools := defaultSheetsTools()

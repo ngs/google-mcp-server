@@ -48,6 +48,7 @@ func TestGetToolsWithoutDefaultClient(t *testing.T) {
 		"sheets_sheet_update",
 		"sheets_dimension_insert",
 		"sheets_dimension_delete",
+		"sheets_cells_format",
 	} {
 		if !byName[name] {
 			t.Errorf("Expected tool %s to be listed", name)
