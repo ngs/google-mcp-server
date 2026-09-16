@@ -391,6 +391,28 @@ func defaultSheetsTools() []server.Tool {
 				Required: []string{"spreadsheet_id", "range"},
 			},
 		},
+
+		{
+			Name: "sheets_cells_get_format",
+			Description: "Read the formatting of a range (background color, text style, alignment, number format). " +
+				"Only formatting is returned; cell values are not read",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"spreadsheet_id": {
+						Type:        "string",
+						Description: "Spreadsheet ID",
+					},
+					"range": {
+						Type: "string",
+						Description: "Bounded A1 notation range to read, such as B46:H51. Open ended ranges and whole " +
+							"sheets are refused so the response stays small. Include the sheet title when the " +
+							"spreadsheet has more than one sheet; without it the first sheet is used",
+					},
+				},
+				Required: []string{"spreadsheet_id", "range"},
+			},
+		},
 	}
 }
 
@@ -727,6 +749,66 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			"range":         formatGridRange(gridRange),
 			"fields":        fields,
 		}, nil
+
+	case "sheets_cells_get_format":
+		var args struct {
+			SpreadsheetID string `json:"spreadsheet_id"`
+			Range         string `json:"range"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if args.Range == "" {
+			return nil, fmt.Errorf("invalid arguments: range is required")
+		}
+
+		// Size the range before fetching it. Checking after the call would let an
+		// unbounded read happen anyway, and the number of cells the API returns
+		// is not the number requested: trailing unformatted cells are omitted
+		sheetTitle, requested, err := parseA1Range(args.Range)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		cells, known := countGridCells(requested)
+		if !known {
+			return nil, fmt.Errorf("range %q is open ended; read a bounded range such as B46:H51 so the response stays small", args.Range)
+		}
+		if cells > maxReadFormatCells {
+			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool reads at once; read a smaller range",
+				args.Range, cells, maxReadFormatCells)
+		}
+
+		// Send the parsed range rather than the caller's string, so the range
+		// that was validated is the one that gets read
+		canonical := gridRangeToA1(sheetTitle, requested)
+		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, canonical)
+		if err != nil {
+			return nil, err
+		}
+		if len(spreadsheet.Sheets) == 0 {
+			return nil, fmt.Errorf("no sheet returned for range %q", args.Range)
+		}
+
+		sheet := spreadsheet.Sheets[0]
+
+		result := map[string]interface{}{
+			"spreadsheetId": args.SpreadsheetID,
+			"range":         canonical,
+			"cells":         []interface{}{},
+		}
+		// A range of entirely unstyled cells comes back with no grid data at
+		// all, which is an empty result rather than an error
+		if len(sheet.Data) > 0 {
+			grid := sheet.Data[0]
+			result["startRow"] = grid.StartRow
+			result["startColumn"] = grid.StartColumn
+			result["cells"] = summarizeGridData(grid)
+		}
+		if sheet.Properties != nil {
+			result["sheetId"] = sheet.Properties.SheetId
+			result["sheetTitle"] = sheet.Properties.Title
+		}
+		return result, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)

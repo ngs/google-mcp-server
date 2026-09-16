@@ -444,3 +444,17 @@ func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, 
 	}
 	return nil
 }
+
+// GetCellFormats reads the effective formatting of a range. The field mask
+// keeps the response to formatting, so no cell values are fetched.
+func (c *Client) GetCellFormats(spreadsheetID, a1Range string) (*sheets.Spreadsheet, error) {
+	spreadsheet, err := c.service.Spreadsheets.Get(spreadsheetID).
+		Ranges(a1Range).
+		IncludeGridData(true).
+		Fields(readFormatFieldMask).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cell formats: %w", err)
+	}
+	return spreadsheet, nil
+}

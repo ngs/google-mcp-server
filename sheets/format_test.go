@@ -415,6 +415,97 @@ func TestFormatCellsRejectsUnsafeRequests(t *testing.T) {
 	}
 }
 
+func TestColorStyleToHex(t *testing.T) {
+	tests := []struct {
+		name  string
+		input json.RawMessage
+		want  string
+	}{
+		{"light yellow", json.RawMessage(`"#FFF299"`), "#FFF299"},
+		{"black", json.RawMessage(`"#000000"`), "#000000"},
+		{"white", json.RawMessage(`"#FFFFFF"`), "#FFFFFF"},
+		{"shorthand expands", json.RawMessage(`"#FC9"`), "#FFCC99"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			color, err := parseColor(tt.input)
+			if err != nil {
+				t.Fatalf("parseColor returned an error: %v", err)
+			}
+			if got := colorStyleToHex(&sheets.ColorStyle{RgbColor: color}); got != tt.want {
+				t.Errorf("colorStyleToHex = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	if got := colorStyleToHex(nil); got != "" {
+		t.Errorf("colorStyleToHex(nil) = %q, want an empty string", got)
+	}
+	if got := colorStyleToHex(&sheets.ColorStyle{ThemeColor: "ACCENT1"}); got != "" {
+		t.Errorf("a theme color has no rgb value, got %q", got)
+	}
+}
+
+// TestSummarizeCellFormatOmitsUnsetFields keeps the read response small: a cell
+// with no styling of its own reports nothing rather than a row of defaults.
+func TestSummarizeCellFormatOmitsUnsetFields(t *testing.T) {
+	if got := summarizeCellFormat(nil); len(got) != 0 {
+		t.Errorf("a nil format should summarize to nothing, got %v", got)
+	}
+	if got := summarizeCellFormat(&sheets.CellFormat{}); len(got) != 0 {
+		t.Errorf("an empty format should summarize to nothing, got %v", got)
+	}
+
+	color, err := parseColor(json.RawMessage(`"#FFF299"`))
+	if err != nil {
+		t.Fatalf("parseColor returned an error: %v", err)
+	}
+	got := summarizeCellFormat(&sheets.CellFormat{
+		BackgroundColorStyle: &sheets.ColorStyle{RgbColor: color},
+		HorizontalAlignment:  "CENTER",
+		TextFormat:           &sheets.TextFormat{Bold: true, FontSize: 12},
+		NumberFormat:         &sheets.NumberFormat{Type: "CURRENCY", Pattern: "#,##0"},
+	})
+
+	if got["backgroundColor"] != "#FFF299" {
+		t.Errorf("backgroundColor = %v, want #FFF299", got["backgroundColor"])
+	}
+	if got["horizontalAlignment"] != "CENTER" {
+		t.Errorf("horizontalAlignment = %v, want CENTER", got["horizontalAlignment"])
+	}
+	if got["bold"] != true {
+		t.Errorf("bold = %v, want true", got["bold"])
+	}
+	if got["fontSize"] != int64(12) {
+		t.Errorf("fontSize = %v, want 12", got["fontSize"])
+	}
+	numberFormat, ok := got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if numberFormat["type"] != "CURRENCY" || numberFormat["pattern"] != "#,##0" {
+		t.Errorf("unexpected number format: %v", numberFormat)
+	}
+	// italic was never set, so it must not appear at all
+	if _, ok := got["italic"]; ok {
+		t.Errorf("italic should be absent, got %v", got)
+	}
+}
+
+// TestReadFormatFieldMaskStaysOnFormatting is the read-side counterpart of the
+// write guarantee: the request must not ask for cell values.
+func TestReadFormatFieldMaskStaysOnFormatting(t *testing.T) {
+	for _, forbidden := range []string{"userEnteredValue", "formattedValue", "effectiveValue", "values.userEntered"} {
+		if strings.Contains(readFormatFieldMask, forbidden) {
+			t.Errorf("the read field mask should not request %s, got %q", forbidden, readFormatFieldMask)
+		}
+	}
+	if !strings.Contains(readFormatFieldMask, "effectiveFormat") {
+		t.Errorf("the read field mask should request effectiveFormat, got %q", readFormatFieldMask)
+	}
+}
+
 // TestBuildFormatRequestRunsBeforeSheetResolution documents that argument
 // validation does not depend on any API call, so a bad argument is reported as
 // such instead of surfacing as a network or OAuth error from resolving a sheet.
@@ -441,5 +532,156 @@ func TestBuildFormatRequestRunsBeforeSheetResolution(t *testing.T) {
 	grid.SheetId = 42
 	if request.RepeatCell.Range.SheetId != 42 {
 		t.Errorf("the request should share the grid range pointer, got %d", request.RepeatCell.Range.SheetId)
+	}
+}
+
+func TestCountGridCells(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		cells int64
+		known bool
+	}{
+		{"block", "Sheet1!B46:H51", 42, true},
+		{"single cell", "Sheet1!G52", 1, true},
+		{"single row", "Sheet1!B61:H61", 7, true},
+		{"whole columns", "Sheet1!A:C", 0, false},
+		{"whole rows", "Sheet1!2:5", 0, false},
+		{"whole sheet", "Sheet1", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, grid, err := parseA1Range(tt.input)
+			if err != nil {
+				t.Fatalf("parseA1Range returned an error: %v", err)
+			}
+			cells, known := countGridCells(grid)
+			if known != tt.known {
+				t.Fatalf("known = %v, want %v", known, tt.known)
+			}
+			if known && cells != tt.cells {
+				t.Errorf("cells = %d, want %d", cells, tt.cells)
+			}
+		})
+	}
+}
+
+// TestReadFormatFieldMaskUsesNestedSelectors checks the partial response
+// selector is written in the nested form the API accepts.
+func TestReadFormatFieldMaskUsesNestedSelectors(t *testing.T) {
+	if strings.Contains(readFormatFieldMask, ".") {
+		t.Errorf("the selector should use nested parentheses, not dotted paths: %q", readFormatFieldMask)
+	}
+	for _, want := range []string{"sheets(", "properties(", "data(", "rowData(", "values(", "effectiveFormat"} {
+		if !strings.Contains(readFormatFieldMask, want) {
+			t.Errorf("the selector should contain %q, got %q", want, readFormatFieldMask)
+		}
+	}
+}
+
+// TestSummarizeCellFormatOmitsEmptyPattern keeps the promise that unset
+// properties are absent: a number format with only a type must not report an
+// empty pattern.
+func TestSummarizeCellFormatOmitsEmptyPattern(t *testing.T) {
+	got := summarizeCellFormat(&sheets.CellFormat{
+		NumberFormat: &sheets.NumberFormat{Type: "PERCENT"},
+	})
+	numberFormat, ok := got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if numberFormat["type"] != "PERCENT" {
+		t.Errorf("type = %v, want PERCENT", numberFormat["type"])
+	}
+	if _, ok := numberFormat["pattern"]; ok {
+		t.Errorf("an empty pattern should be omitted, got %v", numberFormat)
+	}
+
+	// A pattern with no type is still reported
+	got = summarizeCellFormat(&sheets.CellFormat{
+		NumberFormat: &sheets.NumberFormat{Pattern: "#,##0"},
+	})
+	numberFormat, ok = got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if _, ok := numberFormat["type"]; ok {
+		t.Errorf("an empty type should be omitted, got %v", numberFormat)
+	}
+	if numberFormat["pattern"] != "#,##0" {
+		t.Errorf("pattern = %v, want #,##0", numberFormat["pattern"])
+	}
+}
+
+// TestCountGridCellsSaturates guards the size check against an overflow that
+// would wrap a huge range around to a small number.
+func TestCountGridCellsSaturates(t *testing.T) {
+	grid := &sheets.GridRange{
+		StartRowIndex:    0,
+		EndRowIndex:      1 << 50,
+		StartColumnIndex: 0,
+		EndColumnIndex:   1 << 14,
+		ForceSendFields:  []string{"StartRowIndex", "StartColumnIndex"},
+	}
+
+	cells, known := countGridCells(grid)
+	if !known {
+		t.Fatal("a bounded range should report a known size")
+	}
+	if cells <= maxReadFormatCells {
+		t.Errorf("an enormous range reported %d cells, which would pass the limit", cells)
+	}
+}
+
+func TestIndexToColumnLabel(t *testing.T) {
+	tests := map[int64]string{0: "A", 25: "Z", 26: "AA", 51: "AZ", 52: "BA", 701: "ZZ", 18277: "ZZZ"}
+
+	for index, want := range tests {
+		if got := indexToColumnLabel(index); got != want {
+			t.Errorf("indexToColumnLabel(%d) = %q, want %q", index, got, want)
+		}
+	}
+
+	// Every label must survive the round trip back to its index
+	for index := range tests {
+		got, err := columnLabelToIndex(indexToColumnLabel(index))
+		if err != nil {
+			t.Errorf("columnLabelToIndex returned an error for index %d: %v", index, err)
+			continue
+		}
+		if got != index {
+			t.Errorf("round trip of %d gave %d", index, got)
+		}
+	}
+}
+
+// TestGridRangeToA1 covers the canonical range the read path sends to the API,
+// so it reads exactly the range the parser accepted.
+func TestGridRangeToA1(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"block", "Sheet1!B46:H51", "'Sheet1'!B46:H51"},
+		{"no title", "B46:H51", "B46:H51"},
+		{"single cell", "Sheet1!G52", "'Sheet1'!G52:G52"},
+		{"quote is doubled", "'It''s a sheet'!A1", "'It''s a sheet'!A1:A1"},
+		{"full width folded to ascii", "Sheet1!Ｂ４６:Ｈ５１", "'Sheet1'!B46:H51"},
+		{"title containing a bang", "'Data!Sheet'!A1", "'Data!Sheet'!A1:A1"},
+		{"japanese title", "日本語シート!B2", "'日本語シート'!B2:B2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title, grid, err := parseA1Range(tt.input)
+			if err != nil {
+				t.Fatalf("parseA1Range returned an error: %v", err)
+			}
+			if got := gridRangeToA1(title, grid); got != tt.want {
+				t.Errorf("gridRangeToA1 = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
