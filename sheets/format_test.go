@@ -501,8 +501,14 @@ func TestReadFormatFieldMaskStaysOnFormatting(t *testing.T) {
 			t.Errorf("the read field mask should not request %s, got %q", forbidden, readFormatFieldMask)
 		}
 	}
-	if !strings.Contains(readFormatFieldMask, "effectiveFormat") {
-		t.Errorf("the read field mask should request effectiveFormat, got %q", readFormatFieldMask)
+	// userEnteredFormat is what the cell itself carries. effectiveFormat is the
+	// resolved format, which Sheets fills with defaults, so reading it could
+	// not honour the promise that unset properties are omitted
+	if !strings.Contains(readFormatFieldMask, "userEnteredFormat") {
+		t.Errorf("the read field mask should request userEnteredFormat, got %q", readFormatFieldMask)
+	}
+	if strings.Contains(readFormatFieldMask, "effectiveFormat") {
+		t.Errorf("the read field mask should not request the resolved effectiveFormat, got %q", readFormatFieldMask)
 	}
 }
 
@@ -573,7 +579,7 @@ func TestReadFormatFieldMaskUsesNestedSelectors(t *testing.T) {
 	if strings.Contains(readFormatFieldMask, ".") {
 		t.Errorf("the selector should use nested parentheses, not dotted paths: %q", readFormatFieldMask)
 	}
-	for _, want := range []string{"sheets(", "properties(", "data(", "rowData(", "values(", "effectiveFormat"} {
+	for _, want := range []string{"sheets(", "properties(", "data(", "rowData(", "values(", "userEnteredFormat"} {
 		if !strings.Contains(readFormatFieldMask, want) {
 			t.Errorf("the selector should contain %q, got %q", want, readFormatFieldMask)
 		}
