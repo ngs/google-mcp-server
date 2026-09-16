@@ -445,8 +445,11 @@ func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, 
 	return nil
 }
 
-// GetCellFormats reads the effective formatting of a range. The field mask
-// keeps the response to formatting, so no cell values are fetched.
+// GetCellFormats reads the formatting a range carries. The selector asks for
+// userEnteredFormat, what the cells hold, rather than the resolved
+// effectiveFormat, so formatting inherited from the sheet or applied by a
+// conditional format rule is not included. It also keeps the response to
+// formatting, so no cell values are fetched.
 func (c *Client) GetCellFormats(spreadsheetID, a1Range string) (*sheets.Spreadsheet, error) {
 	spreadsheet, err := c.service.Spreadsheets.Get(spreadsheetID).
 		Ranges(a1Range).
