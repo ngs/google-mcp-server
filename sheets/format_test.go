@@ -52,6 +52,13 @@ func TestParseA1Range(t *testing.T) {
 		{"japanese title is not folded", "日本語シート!B2", "日本語シート", idx(1), idx(2), idx(1), idx(2)},
 		{"reversed range is normalized", "Sheet1!H51:B46", "Sheet1", idx(45), idx(51), idx(1), idx(8)},
 		{"title containing a bang", "Data!Sheet1!A1", "Data!Sheet1", idx(0), idx(1), idx(0), idx(1)},
+		// A bare sheet title is A1 notation for the whole sheet, so it must not
+		// be parsed as a cell reference such as column SHEET row 1
+		{"bare sheet title", "Sheet1", "Sheet1", unset(), unset(), unset(), unset()},
+		{"bare quoted title", "'Sheet 1'", "Sheet 1", unset(), unset(), unset(), unset()},
+		{"bare japanese title", "日本語シート", "日本語シート", unset(), unset(), unset(), unset()},
+		{"bare title with escaped quote", "'It''s a sheet'", "It's a sheet", unset(), unset(), unset(), unset()},
+		{"three letter column still parses", "Sheet1!ZZZ1", "Sheet1", idx(0), idx(1), idx(18277), idx(18278)},
 	}
 
 	for _, tt := range tests {
@@ -158,7 +165,8 @@ func TestColumnLabelToIndex(t *testing.T) {
 		}
 	}
 
-	for _, label := range []string{"", "A1"} {
+	// Sheets stops at column ZZZ, so a longer run of letters is a sheet title
+	for _, label := range []string{"", "A1", "AAAA", "Sheet"} {
 		if _, err := columnLabelToIndex(label); err == nil {
 			t.Errorf("columnLabelToIndex(%q) should have returned an error", label)
 		}
@@ -481,5 +489,34 @@ func TestReadFormatFieldMaskStaysOnFormatting(t *testing.T) {
 	}
 	if !strings.Contains(readFormatFieldMask, "effectiveFormat") {
 		t.Errorf("the read field mask should request effectiveFormat, got %q", readFormatFieldMask)
+	}
+}
+
+// TestBuildFormatRequestRunsBeforeSheetResolution documents that argument
+// validation does not depend on any API call, so a bad argument is reported as
+// such instead of surfacing as a network or OAuth error from resolving a sheet.
+func TestBuildFormatRequestRunsBeforeSheetResolution(t *testing.T) {
+	// A grid range whose sheet has not been resolved yet must still validate
+	grid := &sheets.GridRange{}
+
+	if _, _, err := buildFormatRequest(grid, formatArgs{BackgroundColor: json.RawMessage(`"nope"`)}); err == nil {
+		t.Error("a bad color should be rejected without resolving the sheet")
+	}
+	if _, _, err := buildFormatRequest(grid, formatArgs{}); err == nil {
+		t.Error("missing options should be rejected without resolving the sheet")
+	}
+	if grid.SheetId != 0 || len(grid.ForceSendFields) != 0 {
+		t.Errorf("building the request should not touch the grid range, got %+v", grid)
+	}
+
+	// The handler sets the sheet id on this same pointer afterwards, so a
+	// request built first still ends up carrying it
+	request, _, err := buildFormatRequest(grid, formatArgs{BackgroundColor: json.RawMessage(`"#FFF299"`)})
+	if err != nil {
+		t.Fatalf("buildFormatRequest returned an error: %v", err)
+	}
+	grid.SheetId = 42
+	if request.RepeatCell.Range.SheetId != 42 {
+		t.Errorf("the request should share the grid range pointer, got %d", request.RepeatCell.Range.SheetId)
 	}
 }

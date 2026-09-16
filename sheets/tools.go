@@ -336,8 +336,10 @@ func defaultSheetsTools() []server.Tool {
 					},
 					"range": {
 						Type: "string",
-						Description: "A1 notation range to format. Include the sheet title when the spreadsheet has " +
-							"more than one sheet (for example 'Quote v2'!B46:H51); without it the first sheet is used",
+						Description: "Range to format, as a cell range (B46:H51), whole columns (B:H), whole rows (46:51), " +
+							"or a bare sheet title for the whole sheet. Include the sheet title when the spreadsheet has " +
+							"more than one sheet (for example 'Quote v2'!B46:H51); without it the first sheet is used. " +
+							"Both ends of a range must be the same shape, so write B46:H51 rather than the open-ended B46:H",
 					},
 					"background_color": colorProperty("Cell background color (optional)"),
 					"text_format": {
@@ -718,18 +720,22 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 
-		sheetID, resolvedTitle, err := h.client.resolveSheetID(args.SpreadsheetID, sheetTitle)
-		if err != nil {
-			return nil, err
-		}
-		gridRange.SheetId = sheetID
-		// SheetId may legitimately be 0 (the default sheet)
-		gridRange.ForceSendFields = append(gridRange.ForceSendFields, "SheetId")
-
+		// Validate the arguments before spending an API call on resolving the
+		// sheet, so a bad color is reported as a bad color rather than as
+		// whatever error the lookup happens to return
 		request, fields, err := buildFormatRequest(gridRange, args)
 		if err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
+
+		sheetID, resolvedTitle, err := h.client.resolveSheetID(args.SpreadsheetID, sheetTitle)
+		if err != nil {
+			return nil, err
+		}
+		// The request holds this same pointer, so it picks the id up too
+		gridRange.SheetId = sheetID
+		// SheetId may legitimately be 0 (the default sheet)
+		gridRange.ForceSendFields = append(gridRange.ForceSendFields, "SheetId")
 
 		if err := h.client.FormatCells(args.SpreadsheetID, gridRange, request.RepeatCell.Cell, fields); err != nil {
 			return nil, err

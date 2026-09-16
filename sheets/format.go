@@ -38,6 +38,9 @@ type formatArgs struct {
 	Clear               bool                  `json:"clear"`
 }
 
+// maxColumnLabelLength is the longest column label Sheets has, ZZZ.
+const maxColumnLabelLength = 3
+
 // formatFieldRoot is the only field mask root the formatting tool may write.
 const formatFieldRoot = "userEnteredFormat"
 
@@ -171,6 +174,12 @@ func columnLabelToIndex(label string) (int64, error) {
 	if label == "" {
 		return 0, fmt.Errorf("invalid column label: no value given")
 	}
+	// Sheets stops at column ZZZ, so a longer run of letters is not a column.
+	// This is what keeps a bare sheet title such as "Sheet1" from being read as
+	// column SHEET, row 1.
+	if len(label) > maxColumnLabelLength {
+		return 0, fmt.Errorf("invalid column label: %q (columns run from A to %s)", label, strings.Repeat("Z", maxColumnLabelLength))
+	}
 
 	var index int64
 	for _, char := range label {
@@ -266,14 +275,24 @@ func unquoteSheetTitle(title string) string {
 func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 	title := ""
 	reference := a1
+	qualified := false
 	// A sheet title may itself contain "!", so split on the last one
 	if at := strings.LastIndex(a1, "!"); at >= 0 {
+		qualified = true
 		title = unquoteSheetTitle(strings.TrimSpace(a1[:at]))
 		reference = a1[at+1:]
 		// A qualifier that is present but empty, as in "!A1", is a typo. Letting
 		// it fall through to the first sheet would format the wrong cells.
 		if title == "" {
 			return "", nil, fmt.Errorf("invalid range: %q (the sheet title before '!' is empty)", a1)
+		}
+	}
+
+	// Without a "!", a string that is not a cell reference is a bare sheet
+	// title, which is A1 notation for the whole sheet
+	if !qualified {
+		if bare := strings.TrimSpace(a1); bare != "" && !looksLikeCellRange(bare) {
+			return unquoteSheetTitle(bare), &sheets.GridRange{}, nil
 		}
 	}
 
@@ -300,7 +319,7 @@ func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 		return "", nil, fmt.Errorf("invalid range: %q: %w", a1, err)
 	}
 	if start.hasColumn != end.hasColumn || start.hasRow != end.hasRow {
-		return "", nil, fmt.Errorf("invalid range: %q (both ends must have the same shape)", a1)
+		return "", nil, fmt.Errorf("invalid range: %q (both ends must have the same shape: write B46:H51 or B:H, not the open-ended B46:H)", a1)
 	}
 
 	grid := &sheets.GridRange{}
@@ -620,4 +639,21 @@ func summarizeGridData(grid *sheets.GridData) []interface{} {
 		rows = append(rows, cells)
 	}
 	return rows
+}
+
+// looksLikeCellRange reports whether an unqualified A1 string is a cell
+// reference rather than a bare sheet title. Every side has to parse as a cell
+// reference for it to count, so "Sheet1" and "'Sheet 1'" fall through to being
+// treated as titles.
+func looksLikeCellRange(s string) bool {
+	sides := strings.Split(foldFullWidthASCII(s), ":")
+	if len(sides) > 2 {
+		return false
+	}
+	for _, side := range sides {
+		if _, err := parseCellReference(side); err != nil {
+			return false
+		}
+	}
+	return true
 }
