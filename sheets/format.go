@@ -36,10 +36,14 @@ type formatArgs struct {
 	Clear               bool                  `json:"clear"`
 }
 
-// horizontalAlignments lists the alignment values the API accepts.
+// horizontalAlignments lists the alignment values the API accepts. It is
+// shared with the tool schema so the two cannot drift apart; treat it as
+// read-only.
 var horizontalAlignments = []string{"LEFT", "CENTER", "RIGHT"}
 
-// numberFormatTypes lists the number format types the API accepts.
+// numberFormatTypes lists the number format types the API accepts. It is
+// shared with the tool schema so the two cannot drift apart; treat it as
+// read-only.
 var numberFormatTypes = []string{"TEXT", "NUMBER", "PERCENT", "CURRENCY", "DATE", "TIME", "DATE_TIME", "SCIENTIFIC"}
 
 // cellReferencePattern splits a single A1 cell reference into its column label

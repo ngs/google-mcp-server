@@ -369,7 +369,7 @@ func defaultSheetsTools() []server.Tool {
 					"horizontal_alignment": {
 						Type:        "string",
 						Description: "Horizontal alignment of the cell contents (optional)",
-						Enum:        []string{"LEFT", "CENTER", "RIGHT"},
+						Enum:        horizontalAlignments,
 					},
 					"number_format": {
 						Type:        "object",
@@ -378,7 +378,7 @@ func defaultSheetsTools() []server.Tool {
 							"type": {
 								Type:        "string",
 								Description: "Number format type",
-								Enum:        []string{"TEXT", "NUMBER", "PERCENT", "CURRENCY", "DATE", "TIME", "DATE_TIME", "SCIENTIFIC"},
+								Enum:        numberFormatTypes,
 							},
 							"pattern": {
 								Type:        "string",
