@@ -128,3 +128,31 @@ func TestPropertyEncodesNestedObject(t *testing.T) {
 		}
 	}
 }
+
+// TestPropertyEncodesUnionSchema covers a property that accepts more than one
+// shape, as the color arguments do.
+func TestPropertyEncodesUnionSchema(t *testing.T) {
+	encoded, err := json.Marshal(Property{
+		Description: "A color",
+		AnyOf: []Property{
+			{Type: "string", Description: "Hex string"},
+			{Type: "object", Description: "Components"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Failed to marshal property: %v", err)
+	}
+
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("Failed to unmarshal property: %v", err)
+	}
+	if _, ok := decoded["anyOf"]; !ok {
+		t.Errorf("Property JSON should contain anyOf, got %s", encoded)
+	}
+	// A union must not also claim a single type, which would contradict it.
+	// The branches inside anyOf keep their own types.
+	if _, ok := decoded["type"]; ok {
+		t.Errorf("Property JSON should omit an empty type, got %s", encoded)
+	}
+}

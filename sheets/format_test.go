@@ -125,6 +125,10 @@ func TestParseA1RangeErrors(t *testing.T) {
 		"Sheet1!B46:H",
 		"Sheet1!1A",
 		"Sheet1!A1:B2:C3",
+		// An empty sheet qualifier is a typo, not a request for the first sheet
+		"!A1",
+		"''!A1",
+		"  !A1",
 	} {
 		if _, _, err := parseA1Range(input); err == nil {
 			t.Errorf("parseA1Range(%q) should have returned an error", input)
@@ -371,7 +375,18 @@ func TestFormatCellsRejectsUnsafeRequests(t *testing.T) {
 		t.Error("FormatCells should reject a cell carrying a value")
 	}
 
-	for _, fields := range []string{"", "values", "*", "userEnteredValue"} {
+	// A prefix check alone would let a second path ride along in the mask and
+	// clear the values that repeatCell also applies it to
+	for _, fields := range []string{
+		"",
+		"values",
+		"*",
+		"userEnteredValue",
+		"userEnteredFormat,userEnteredValue",
+		"userEnteredFormat.backgroundColorStyle,userEnteredValue",
+		"userEnteredFormatButNotReally",
+		"userEnteredFormat,",
+	} {
 		if err := client.FormatCells("sheet", grid, safeCell, fields); err == nil {
 			t.Errorf("FormatCells should reject the field mask %q", fields)
 		}

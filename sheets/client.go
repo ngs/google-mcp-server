@@ -435,8 +435,8 @@ func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, 
 	if cell != nil && cell.UserEnteredValue != nil {
 		return fmt.Errorf("invalid request: formatting must not carry a cell value")
 	}
-	if fields == "" || !strings.HasPrefix(fields, "userEnteredFormat") {
-		return fmt.Errorf("invalid fields mask: %q (must be scoped to userEnteredFormat)", fields)
+	if err := validateFormatFieldMask(fields); err != nil {
+		return err
 	}
 
 	if _, err := c.batchUpdate(spreadsheetID, repeatCellRequest(gridRange, cell, fields)); err != nil {

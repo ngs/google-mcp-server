@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"go.ngs.io/google-mcp-server/server"
 	"google.golang.org/api/sheets/v4"
 )
 
@@ -35,6 +36,9 @@ type formatArgs struct {
 	NumberFormat        *cellNumberFormatArgs `json:"number_format"`
 	Clear               bool                  `json:"clear"`
 }
+
+// formatFieldRoot is the only field mask root the formatting tool may write.
+const formatFieldRoot = "userEnteredFormat"
 
 // horizontalAlignments lists the alignment values the API accepts. It is
 // shared with the tool schema so the two cannot drift apart; treat it as
@@ -263,8 +267,13 @@ func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 	reference := a1
 	// A sheet title may itself contain "!", so split on the last one
 	if at := strings.LastIndex(a1, "!"); at >= 0 {
-		title = unquoteSheetTitle(a1[:at])
+		title = unquoteSheetTitle(strings.TrimSpace(a1[:at]))
 		reference = a1[at+1:]
+		// A qualifier that is present but empty, as in "!A1", is a typo. Letting
+		// it fall through to the first sheet would format the wrong cells.
+		if title == "" {
+			return "", nil, fmt.Errorf("invalid range: %q (the sheet title before '!' is empty)", a1)
+		}
 	}
 
 	// Only the reference is folded; folding the title would corrupt it
@@ -476,4 +485,55 @@ func formatGridRange(grid *sheets.GridRange) map[string]interface{} {
 		rendered["endColumnIndex"] = grid.EndColumnIndex
 	}
 	return rendered
+}
+
+// validateFormatFieldMask checks that every path in a comma-separated field
+// mask stays inside userEnteredFormat. A prefix check on the whole mask is not
+// enough: repeatCell applies every path it is given, so a mask such as
+// "userEnteredFormat,userEnteredValue" would clear the values of the range.
+func validateFormatFieldMask(fields string) error {
+	if fields == "" {
+		return fmt.Errorf("invalid fields mask: %q (must be scoped to userEnteredFormat)", fields)
+	}
+
+	for _, path := range strings.Split(fields, ",") {
+		path = strings.TrimSpace(path)
+		if path == formatFieldRoot || strings.HasPrefix(path, formatFieldRoot+".") {
+			continue
+		}
+		return fmt.Errorf("invalid fields mask: %q (the path %q is not scoped to %s)", fields, path, formatFieldRoot)
+	}
+
+	return nil
+}
+
+// colorProperty describes a color argument. A color may be written either as a
+// hex string or as an object of components, so the schema is a union: a single
+// declared type would make a schema-validating client reject the other form
+// before the handler ever sees it.
+func colorProperty(description string) server.Property {
+	component := server.Property{
+		Type:        "number",
+		Description: "Component between 0 and 1",
+	}
+
+	return server.Property{
+		Description: description + ". Either a hex string such as #FFF299, or an object of components",
+		AnyOf: []server.Property{
+			{
+				Type:        "string",
+				Description: "Hex color, such as #FFF299, FFF299 or the shorthand #FC9",
+			},
+			{
+				Type:        "object",
+				Description: "Color components, each between 0 and 1",
+				Properties: map[string]server.Property{
+					"red":   component,
+					"green": component,
+					"blue":  component,
+					"alpha": component,
+				},
+			},
+		},
+	}
 }

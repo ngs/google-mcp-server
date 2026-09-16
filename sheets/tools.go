@@ -339,11 +339,7 @@ func defaultSheetsTools() []server.Tool {
 						Description: "A1 notation range to format. Include the sheet title when the spreadsheet has " +
 							"more than one sheet (for example 'Quote v2'!B46:H51); without it the first sheet is used",
 					},
-					"background_color": {
-						Type: "string",
-						Description: "Cell background color (optional). A hex string such as #FFF299, or an object " +
-							"such as {\"red\": 1, \"green\": 0.95, \"blue\": 0.6} with components between 0 and 1",
-					},
+					"background_color": colorProperty("Cell background color (optional)"),
 					"text_format": {
 						Type:        "object",
 						Description: "Text style to apply (optional). Every field is optional and unset fields are left untouched",
@@ -360,10 +356,7 @@ func defaultSheetsTools() []server.Tool {
 								Type:        "number",
 								Description: "Font size in points, as a positive whole number",
 							},
-							"foreground_color": {
-								Type:        "string",
-								Description: "Text color, in the same formats as background_color",
-							},
+							"foreground_color": colorProperty("Text color (optional)"),
 						},
 					},
 					"horizontal_alignment": {
