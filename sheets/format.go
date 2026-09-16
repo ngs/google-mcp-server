@@ -124,7 +124,7 @@ func parseHexColor(hex string) (*sheets.Color, error) {
 	}, nil
 }
 
-// parseColorObject converts {red, green, blue, alpha} into an API color. Every
+// parseColorObject converts {red, green, blue} into an API color. Every
 // component is optional and defaults to 0.
 func parseColorObject(raw json.RawMessage) (*sheets.Color, error) {
 	// Alpha is deliberately absent: Sheets does not generally honour it in a
