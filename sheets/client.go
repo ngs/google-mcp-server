@@ -386,3 +386,68 @@ func (c *Client) ClearValues(spreadsheetID, range_ string) (*sheets.ClearValuesR
 	}
 	return response, nil
 }
+
+// resolveSheetID finds the sheet id for a title. An empty title selects the
+// first sheet, matching how the values endpoints treat a range without one.
+// The resolved title is returned alongside the id.
+func (c *Client) resolveSheetID(spreadsheetID, title string) (int64, string, error) {
+	spreadsheet, err := c.GetSpreadsheet(spreadsheetID)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(spreadsheet.Sheets) == 0 {
+		return 0, "", fmt.Errorf("spreadsheet %s has no sheets", spreadsheetID)
+	}
+
+	if title == "" {
+		first := spreadsheet.Sheets[0]
+		for _, sheet := range spreadsheet.Sheets {
+			if sheet.Properties != nil && sheet.Properties.Index == 0 {
+				first = sheet
+				break
+			}
+		}
+		if first.Properties == nil {
+			return 0, "", fmt.Errorf("spreadsheet %s has no sheet properties", spreadsheetID)
+		}
+		return first.Properties.SheetId, first.Properties.Title, nil
+	}
+
+	for _, sheet := range spreadsheet.Sheets {
+		if sheet.Properties != nil && sheet.Properties.Title == title {
+			return sheet.Properties.SheetId, sheet.Properties.Title, nil
+		}
+	}
+	// Fall back to a case-insensitive match before giving up
+	for _, sheet := range spreadsheet.Sheets {
+		if sheet.Properties != nil && strings.EqualFold(sheet.Properties.Title, title) {
+			return sheet.Properties.SheetId, sheet.Properties.Title, nil
+		}
+	}
+
+	return 0, "", fmt.Errorf("sheet %q not found in spreadsheet %s", title, spreadsheetID)
+}
+
+// FormatCells applies a formatting-only repeatCell request to a range. The
+// field mask is always scoped to userEnteredFormat and the cell may not carry a
+// value, so cell values and formulas are never modified.
+func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, cell *sheets.CellData, fields string) error {
+	if cell != nil && cell.UserEnteredValue != nil {
+		return fmt.Errorf("invalid request: formatting must not carry a cell value")
+	}
+	if fields == "" || !strings.HasPrefix(fields, "userEnteredFormat") {
+		return fmt.Errorf("invalid fields mask: %q (must be scoped to userEnteredFormat)", fields)
+	}
+
+	_, err := c.batchUpdate(spreadsheetID, &sheets.Request{
+		RepeatCell: &sheets.RepeatCellRequest{
+			Range:  gridRange,
+			Cell:   cell,
+			Fields: fields,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to format cells: %w", err)
+	}
+	return nil
+}

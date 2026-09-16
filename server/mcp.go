@@ -45,12 +45,15 @@ type InputSchema struct {
 	Required   []string            `json:"required,omitempty"`
 }
 
-// Property represents a property in the input schema
+// Property represents a property in the input schema. Properties and Required
+// describe a nested object schema and are omitted for scalar properties.
 type Property struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	Items       *Property `json:"items,omitempty"`
-	Enum        []string  `json:"enum,omitempty"`
+	Type        string              `json:"type"`
+	Description string              `json:"description"`
+	Items       *Property           `json:"items,omitempty"`
+	Enum        []string            `json:"enum,omitempty"`
+	Properties  map[string]Property `json:"properties,omitempty"`
+	Required    []string            `json:"required,omitempty"`
 }
 
 // Resource represents an MCP resource

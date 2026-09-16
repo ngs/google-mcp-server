@@ -3,6 +3,7 @@ package sheets
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -307,7 +308,7 @@ func TestBuildFormatRequestClear(t *testing.T) {
 	if format == nil {
 		t.Fatal("the cell format should be an empty struct, not nil")
 	}
-	if *format != (sheets.CellFormat{}) {
+	if !reflect.DeepEqual(format, &sheets.CellFormat{}) {
 		t.Errorf("the cell format should be empty, got %+v", format)
 	}
 }

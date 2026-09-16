@@ -323,6 +323,79 @@ func defaultSheetsTools() []server.Tool {
 				Required: []string{"spreadsheet_id", "range"},
 			},
 		},
+		{
+			Name: "sheets_cells_format",
+			Description: "Apply cell formatting (background color, text style, alignment, number format) to a range. " +
+				"Only formatting is changed; cell values and formulas are never modified",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"spreadsheet_id": {
+						Type:        "string",
+						Description: "Spreadsheet ID",
+					},
+					"range": {
+						Type: "string",
+						Description: "A1 notation range to format. Include the sheet title when the spreadsheet has " +
+							"more than one sheet (for example 'Quote v2'!B46:H51); without it the first sheet is used",
+					},
+					"background_color": {
+						Type: "string",
+						Description: "Cell background color (optional). A hex string such as #FFF299, or an object " +
+							"such as {\"red\": 1, \"green\": 0.95, \"blue\": 0.6} with components between 0 and 1",
+					},
+					"text_format": {
+						Type:        "object",
+						Description: "Text style to apply (optional). Every field is optional and unset fields are left untouched",
+						Properties: map[string]server.Property{
+							"bold": {
+								Type:        "boolean",
+								Description: "Bold text. Pass false to remove an existing bold style",
+							},
+							"italic": {
+								Type:        "boolean",
+								Description: "Italic text. Pass false to remove an existing italic style",
+							},
+							"font_size": {
+								Type:        "number",
+								Description: "Font size in points, as a positive whole number",
+							},
+							"foreground_color": {
+								Type:        "string",
+								Description: "Text color, in the same formats as background_color",
+							},
+						},
+					},
+					"horizontal_alignment": {
+						Type:        "string",
+						Description: "Horizontal alignment of the cell contents (optional)",
+						Enum:        []string{"LEFT", "CENTER", "RIGHT"},
+					},
+					"number_format": {
+						Type:        "object",
+						Description: "Number format to apply (optional)",
+						Properties: map[string]server.Property{
+							"type": {
+								Type:        "string",
+								Description: "Number format type",
+								Enum:        []string{"TEXT", "NUMBER", "PERCENT", "CURRENCY", "DATE", "TIME", "DATE_TIME", "SCIENTIFIC"},
+							},
+							"pattern": {
+								Type:        "string",
+								Description: "Format pattern, such as #,##0.00 (optional)",
+							},
+						},
+						Required: []string{"type"},
+					},
+					"clear": {
+						Type: "boolean",
+						Description: "Reset all formatting in the range (optional). Cannot be combined with the other " +
+							"formatting options. Cell values are kept",
+					},
+				},
+				Required: []string{"spreadsheet_id", "range"},
+			},
+		},
 	}
 }
 
@@ -619,6 +692,42 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			"clearedRange":  response.ClearedRange,
 		}
 		return result, nil
+
+	case "sheets_cells_format":
+		var args formatArgs
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		sheetTitle, gridRange, err := parseA1Range(args.Range)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		sheetID, resolvedTitle, err := h.client.resolveSheetID(args.SpreadsheetID, sheetTitle)
+		if err != nil {
+			return nil, err
+		}
+		gridRange.SheetId = sheetID
+		// SheetId may legitimately be 0 (the default sheet)
+		gridRange.ForceSendFields = append(gridRange.ForceSendFields, "SheetId")
+
+		request, fields, err := buildFormatRequest(gridRange, args)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		if err := h.client.FormatCells(args.SpreadsheetID, gridRange, request.RepeatCell.Cell, fields); err != nil {
+			return nil, err
+		}
+
+		return map[string]interface{}{
+			"spreadsheetId": args.SpreadsheetID,
+			"sheetId":       sheetID,
+			"sheetTitle":    resolvedTitle,
+			"range":         formatGridRange(gridRange),
+			"fields":        fields,
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
