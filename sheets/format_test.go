@@ -59,6 +59,10 @@ func TestParseA1Range(t *testing.T) {
 		{"bare japanese title", "日本語シート", "日本語シート", unset(), unset(), unset(), unset()},
 		{"bare title with escaped quote", "'It''s a sheet'", "It's a sheet", unset(), unset(), unset(), unset()},
 		{"three letter column still parses", "Sheet1!ZZZ1", "Sheet1", idx(0), idx(1), idx(18277), idx(18278)},
+		// A "!" inside a quoted title is part of the name, not the separator
+		{"bare quoted title containing a bang", "'Data!Sheet'", "Data!Sheet", unset(), unset(), unset(), unset()},
+		{"quoted title containing a bang", "'Data!Sheet'!A1", "Data!Sheet", idx(0), idx(1), idx(0), idx(1)},
+		{"quoted title with bang and escaped quote", "'It''s!Here'!B2", "It's!Here", idx(1), idx(2), idx(1), idx(2)},
 	}
 
 	for _, tt := range tests {
@@ -518,5 +522,84 @@ func TestBuildFormatRequestRunsBeforeSheetResolution(t *testing.T) {
 	grid.SheetId = 42
 	if request.RepeatCell.Range.SheetId != 42 {
 		t.Errorf("the request should share the grid range pointer, got %d", request.RepeatCell.Range.SheetId)
+	}
+}
+
+func TestCountGridCells(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		cells int64
+		known bool
+	}{
+		{"block", "Sheet1!B46:H51", 42, true},
+		{"single cell", "Sheet1!G52", 1, true},
+		{"single row", "Sheet1!B61:H61", 7, true},
+		{"whole columns", "Sheet1!A:C", 0, false},
+		{"whole rows", "Sheet1!2:5", 0, false},
+		{"whole sheet", "Sheet1", 0, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, grid, err := parseA1Range(tt.input)
+			if err != nil {
+				t.Fatalf("parseA1Range returned an error: %v", err)
+			}
+			cells, known := countGridCells(grid)
+			if known != tt.known {
+				t.Fatalf("known = %v, want %v", known, tt.known)
+			}
+			if known && cells != tt.cells {
+				t.Errorf("cells = %d, want %d", cells, tt.cells)
+			}
+		})
+	}
+}
+
+// TestReadFormatFieldMaskUsesNestedSelectors checks the partial response
+// selector is written in the nested form the API accepts.
+func TestReadFormatFieldMaskUsesNestedSelectors(t *testing.T) {
+	if strings.Contains(readFormatFieldMask, ".") {
+		t.Errorf("the selector should use nested parentheses, not dotted paths: %q", readFormatFieldMask)
+	}
+	for _, want := range []string{"sheets(", "properties(", "data(", "rowData(", "values(", "effectiveFormat"} {
+		if !strings.Contains(readFormatFieldMask, want) {
+			t.Errorf("the selector should contain %q, got %q", want, readFormatFieldMask)
+		}
+	}
+}
+
+// TestSummarizeCellFormatOmitsEmptyPattern keeps the promise that unset
+// properties are absent: a number format with only a type must not report an
+// empty pattern.
+func TestSummarizeCellFormatOmitsEmptyPattern(t *testing.T) {
+	got := summarizeCellFormat(&sheets.CellFormat{
+		NumberFormat: &sheets.NumberFormat{Type: "PERCENT"},
+	})
+	numberFormat, ok := got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if numberFormat["type"] != "PERCENT" {
+		t.Errorf("type = %v, want PERCENT", numberFormat["type"])
+	}
+	if _, ok := numberFormat["pattern"]; ok {
+		t.Errorf("an empty pattern should be omitted, got %v", numberFormat)
+	}
+
+	// A pattern with no type is still reported
+	got = summarizeCellFormat(&sheets.CellFormat{
+		NumberFormat: &sheets.NumberFormat{Pattern: "#,##0"},
+	})
+	numberFormat, ok = got["numberFormat"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("numberFormat = %v, want a map", got["numberFormat"])
+	}
+	if _, ok := numberFormat["type"]; ok {
+		t.Errorf("an empty type should be omitted, got %v", numberFormat)
+	}
+	if numberFormat["pattern"] != "#,##0" {
+		t.Errorf("pattern = %v, want #,##0", numberFormat["pattern"])
 	}
 }

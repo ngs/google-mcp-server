@@ -276,8 +276,9 @@ func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 	title := ""
 	reference := a1
 	qualified := false
-	// A sheet title may itself contain "!", so split on the last one
-	if at := strings.LastIndex(a1, "!"); at >= 0 {
+	// A sheet title may itself contain "!", so split on the last one that is
+	// not inside quotes
+	if at := lastUnquotedBang(a1); at >= 0 {
 		qualified = true
 		title = unquoteSheetTitle(strings.TrimSpace(a1[:at]))
 		reference = a1[at+1:]
@@ -561,8 +562,8 @@ func colorProperty(description string) server.Property {
 // readFormatFieldMask limits the spreadsheets.get response to cell formatting.
 // Grid data would otherwise carry the cell values too, which this tool has no
 // reason to read.
-const readFormatFieldMask = "sheets.properties.sheetId,sheets.properties.title," +
-	"sheets.data.startRow,sheets.data.startColumn,sheets.data.rowData.values.effectiveFormat"
+const readFormatFieldMask = "sheets(properties(sheetId,title)," +
+	"data(startRow,startColumn,rowData(values(effectiveFormat))))"
 
 // maxReadFormatCells caps how many cells one read returns, so a whole-column
 // range cannot produce an unreadable response.
@@ -604,11 +605,15 @@ func summarizeCellFormat(format *sheets.CellFormat) map[string]interface{} {
 	if format.HorizontalAlignment != "" {
 		summary["horizontalAlignment"] = format.HorizontalAlignment
 	}
-	if format.NumberFormat != nil && (format.NumberFormat.Type != "" || format.NumberFormat.Pattern != "") {
-		summary["numberFormat"] = map[string]interface{}{
-			"type":    format.NumberFormat.Type,
-			"pattern": format.NumberFormat.Pattern,
+	if number := format.NumberFormat; number != nil && (number.Type != "" || number.Pattern != "") {
+		rendered := map[string]interface{}{}
+		if number.Type != "" {
+			rendered["type"] = number.Type
 		}
+		if number.Pattern != "" {
+			rendered["pattern"] = number.Pattern
+		}
+		summary["numberFormat"] = rendered
 	}
 	if text := format.TextFormat; text != nil {
 		if text.Bold {
@@ -656,4 +661,51 @@ func looksLikeCellRange(s string) bool {
 		}
 	}
 	return true
+}
+
+// lastUnquotedBang returns the index of the last "!" that separates a sheet
+// title from a cell reference, ignoring any that sit inside a quoted title such
+// as 'Data!Sheet'. It returns -1 when there is none.
+func lastUnquotedBang(a1 string) int {
+	last := -1
+	inQuotes := false
+
+	for i := 0; i < len(a1); i++ {
+		switch a1[i] {
+		case '\'':
+			// A doubled quote is an escaped quote inside a title, not the end
+			if inQuotes && i+1 < len(a1) && a1[i+1] == '\'' {
+				i++
+				continue
+			}
+			inQuotes = !inQuotes
+		case '!':
+			if !inQuotes {
+				last = i
+			}
+		}
+	}
+
+	return last
+}
+
+// countGridCells returns how many cells a grid range covers, and whether that
+// number is known at all. A range left open on either axis, such as a whole
+// column or a whole sheet, has no known size.
+func countGridCells(grid *sheets.GridRange) (int64, bool) {
+	forced := make(map[string]bool, len(grid.ForceSendFields))
+	for _, name := range grid.ForceSendFields {
+		forced[name] = true
+	}
+	if !forced["StartRowIndex"] || !forced["StartColumnIndex"] {
+		return 0, false
+	}
+
+	rows := grid.EndRowIndex - grid.StartRowIndex
+	columns := grid.EndColumnIndex - grid.StartColumnIndex
+	if rows <= 0 || columns <= 0 {
+		return 0, false
+	}
+
+	return rows * columns, true
 }

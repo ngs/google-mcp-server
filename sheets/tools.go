@@ -405,8 +405,9 @@ func defaultSheetsTools() []server.Tool {
 					},
 					"range": {
 						Type: "string",
-						Description: "A1 notation range to read. Include the sheet title when the spreadsheet has " +
-							"more than one sheet; without it the first sheet is used",
+						Description: "Bounded A1 notation range to read, such as B46:H51. Open ended ranges and whole " +
+							"sheets are refused so the response stays small. Include the sheet title when the " +
+							"spreadsheet has more than one sheet; without it the first sheet is used",
 					},
 				},
 				Required: []string{"spreadsheet_id", "range"},
@@ -761,6 +762,18 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: range is required")
 		}
 
+		// Size the range before fetching it. Checking after the call would let an
+		// unbounded read happen anyway, and the number of cells the API returns
+		// is not the number requested: trailing unformatted cells are omitted
+		if _, requested, err := parseA1Range(args.Range); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		} else if cells, known := countGridCells(requested); !known {
+			return nil, fmt.Errorf("range %q is open ended; read a bounded range such as B46:H51 so the response stays small", args.Range)
+		} else if cells > maxReadFormatCells {
+			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool reads at once; read a smaller range",
+				args.Range, cells, maxReadFormatCells)
+		}
+
 		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, args.Range)
 		if err != nil {
 			return nil, err
@@ -771,15 +784,6 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 
 		sheet := spreadsheet.Sheets[0]
 		grid := sheet.Data[0]
-
-		cellCount := 0
-		for _, row := range grid.RowData {
-			cellCount += len(row.Values)
-		}
-		if cellCount > maxReadFormatCells {
-			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool returns at once; read a smaller range",
-				args.Range, cellCount, maxReadFormatCells)
-		}
 
 		result := map[string]interface{}{
 			"spreadsheetId": args.SpreadsheetID,
