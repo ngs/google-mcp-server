@@ -140,6 +140,10 @@ func TestParseA1RangeErrors(t *testing.T) {
 		"!A1",
 		"''!A1",
 		"  !A1",
+		// An empty quoted title on its own would otherwise select the whole
+		// first sheet, which is a destructive thing to do for a typo
+		"''",
+		"'  '",
 	} {
 		if _, _, err := parseA1Range(input); err == nil {
 			t.Errorf("parseA1Range(%q) should have returned an error", input)
@@ -601,5 +605,77 @@ func TestSummarizeCellFormatOmitsEmptyPattern(t *testing.T) {
 	}
 	if numberFormat["pattern"] != "#,##0" {
 		t.Errorf("pattern = %v, want #,##0", numberFormat["pattern"])
+	}
+}
+
+// TestCountGridCellsSaturates guards the size check against an overflow that
+// would wrap a huge range around to a small number.
+func TestCountGridCellsSaturates(t *testing.T) {
+	grid := &sheets.GridRange{
+		StartRowIndex:    0,
+		EndRowIndex:      1 << 50,
+		StartColumnIndex: 0,
+		EndColumnIndex:   1 << 14,
+		ForceSendFields:  []string{"StartRowIndex", "StartColumnIndex"},
+	}
+
+	cells, known := countGridCells(grid)
+	if !known {
+		t.Fatal("a bounded range should report a known size")
+	}
+	if cells <= maxReadFormatCells {
+		t.Errorf("an enormous range reported %d cells, which would pass the limit", cells)
+	}
+}
+
+func TestIndexToColumnLabel(t *testing.T) {
+	tests := map[int64]string{0: "A", 25: "Z", 26: "AA", 51: "AZ", 52: "BA", 701: "ZZ", 18277: "ZZZ"}
+
+	for index, want := range tests {
+		if got := indexToColumnLabel(index); got != want {
+			t.Errorf("indexToColumnLabel(%d) = %q, want %q", index, got, want)
+		}
+	}
+
+	// Every label must survive the round trip back to its index
+	for index := range tests {
+		got, err := columnLabelToIndex(indexToColumnLabel(index))
+		if err != nil {
+			t.Errorf("columnLabelToIndex returned an error for index %d: %v", index, err)
+			continue
+		}
+		if got != index {
+			t.Errorf("round trip of %d gave %d", index, got)
+		}
+	}
+}
+
+// TestGridRangeToA1 covers the canonical range the read path sends to the API,
+// so it reads exactly the range the parser accepted.
+func TestGridRangeToA1(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"block", "Sheet1!B46:H51", "'Sheet1'!B46:H51"},
+		{"no title", "B46:H51", "B46:H51"},
+		{"single cell", "Sheet1!G52", "'Sheet1'!G52:G52"},
+		{"quote is doubled", "'It''s a sheet'!A1", "'It''s a sheet'!A1:A1"},
+		{"full width folded to ascii", "Sheet1!Ｂ４６:Ｈ５１", "'Sheet1'!B46:H51"},
+		{"title containing a bang", "'Data!Sheet'!A1", "'Data!Sheet'!A1:A1"},
+		{"japanese title", "日本語シート!B2", "'日本語シート'!B2:B2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			title, grid, err := parseA1Range(tt.input)
+			if err != nil {
+				t.Fatalf("parseA1Range returned an error: %v", err)
+			}
+			if got := gridRangeToA1(title, grid); got != tt.want {
+				t.Errorf("gridRangeToA1 = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

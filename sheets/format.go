@@ -293,7 +293,13 @@ func parseA1Range(a1 string) (string, *sheets.GridRange, error) {
 	// title, which is A1 notation for the whole sheet
 	if !qualified {
 		if bare := strings.TrimSpace(a1); bare != "" && !looksLikeCellRange(bare) {
-			return unquoteSheetTitle(bare), &sheets.GridRange{}, nil
+			bareTitle := strings.TrimSpace(unquoteSheetTitle(bare))
+			// An empty title would select the first sheet, so a typo such as
+			// "''" would repaint a whole sheet. Reject it like "!A1" is
+			if bareTitle == "" {
+				return "", nil, fmt.Errorf("invalid range: %q (the sheet title is empty)", a1)
+			}
+			return bareTitle, &sheets.GridRange{}, nil
 		}
 	}
 
@@ -706,6 +712,43 @@ func countGridCells(grid *sheets.GridRange) (int64, bool) {
 	if rows <= 0 || columns <= 0 {
 		return 0, false
 	}
+	// Saturate rather than wrap: an overflowing product would come out small
+	// enough to pass the size limit it is meant to fail
+	if rows > math.MaxInt64/columns {
+		return math.MaxInt64, true
+	}
 
 	return rows * columns, true
+}
+
+// indexToColumnLabel converts a zero-based column index back into its label:
+// 0 is "A", 25 is "Z" and 26 is "AA".
+func indexToColumnLabel(index int64) string {
+	label := make([]byte, 0, maxColumnLabelLength)
+	for index >= 0 {
+		label = append([]byte{byte('A' + index%26)}, label...)
+		index = index/26 - 1
+	}
+	return string(label)
+}
+
+// quoteSheetTitle wraps a sheet title in single quotes, doubling any quote it
+// contains. Quoting unconditionally keeps titles with spaces, bangs or
+// non-ASCII characters intact.
+func quoteSheetTitle(title string) string {
+	return "'" + strings.ReplaceAll(title, "'", "''") + "'"
+}
+
+// gridRangeToA1 renders a parsed range back into A1 notation. The read path
+// sends this instead of the caller's original string, so the range that was
+// validated is the range that gets read.
+func gridRangeToA1(title string, grid *sheets.GridRange) string {
+	reference := fmt.Sprintf("%s%d:%s%d",
+		indexToColumnLabel(grid.StartColumnIndex), grid.StartRowIndex+1,
+		indexToColumnLabel(grid.EndColumnIndex-1), grid.EndRowIndex)
+
+	if title == "" {
+		return reference
+	}
+	return quoteSheetTitle(title) + "!" + reference
 }

@@ -765,32 +765,44 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		// Size the range before fetching it. Checking after the call would let an
 		// unbounded read happen anyway, and the number of cells the API returns
 		// is not the number requested: trailing unformatted cells are omitted
-		if _, requested, err := parseA1Range(args.Range); err != nil {
+		sheetTitle, requested, err := parseA1Range(args.Range)
+		if err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
-		} else if cells, known := countGridCells(requested); !known {
+		}
+		cells, known := countGridCells(requested)
+		if !known {
 			return nil, fmt.Errorf("range %q is open ended; read a bounded range such as B46:H51 so the response stays small", args.Range)
-		} else if cells > maxReadFormatCells {
+		}
+		if cells > maxReadFormatCells {
 			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool reads at once; read a smaller range",
 				args.Range, cells, maxReadFormatCells)
 		}
 
-		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, args.Range)
+		// Send the parsed range rather than the caller's string, so the range
+		// that was validated is the one that gets read
+		canonical := gridRangeToA1(sheetTitle, requested)
+		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, canonical)
 		if err != nil {
 			return nil, err
 		}
-		if len(spreadsheet.Sheets) == 0 || len(spreadsheet.Sheets[0].Data) == 0 {
-			return nil, fmt.Errorf("no grid data returned for range %q", args.Range)
+		if len(spreadsheet.Sheets) == 0 {
+			return nil, fmt.Errorf("no sheet returned for range %q", args.Range)
 		}
 
 		sheet := spreadsheet.Sheets[0]
-		grid := sheet.Data[0]
 
 		result := map[string]interface{}{
 			"spreadsheetId": args.SpreadsheetID,
-			"range":         args.Range,
-			"startRow":      grid.StartRow,
-			"startColumn":   grid.StartColumn,
-			"cells":         summarizeGridData(grid),
+			"range":         canonical,
+			"cells":         []interface{}{},
+		}
+		// A range of entirely unstyled cells comes back with no grid data at
+		// all, which is an empty result rather than an error
+		if len(sheet.Data) > 0 {
+			grid := sheet.Data[0]
+			result["startRow"] = grid.StartRow
+			result["startColumn"] = grid.StartColumn
+			result["cells"] = summarizeGridData(grid)
 		}
 		if sheet.Properties != nil {
 			result["sheetId"] = sheet.Properties.SheetId
