@@ -396,7 +396,8 @@ func defaultSheetsTools() []server.Tool {
 			Name: "sheets_cells_get_format",
 			Description: "Read the formatting a range carries (background color, text style, alignment, number format). " +
 				"Only formatting is returned; cell values are not read. Reports what is set on the cells themselves, " +
-				"so formatting inherited from the sheet or applied by a conditional format rule is not included",
+				"so formatting inherited from the sheet or applied by a conditional format rule is not included, and " +
+				"a bold or italic style that is explicitly turned off is reported the same as one that was never set",
 			InputSchema: server.InputSchema{
 				Type: "object",
 				Properties: map[string]server.Property{
