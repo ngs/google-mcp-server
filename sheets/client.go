@@ -386,3 +386,78 @@ func (c *Client) ClearValues(spreadsheetID, range_ string) (*sheets.ClearValuesR
 	}
 	return response, nil
 }
+
+// resolveSheetID finds the sheet id for a title. An empty title selects the
+// first sheet, matching how the values endpoints treat a range without one.
+// The resolved title is returned alongside the id.
+func (c *Client) resolveSheetID(spreadsheetID, title string) (int64, string, error) {
+	spreadsheet, err := c.GetSpreadsheet(spreadsheetID)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(spreadsheet.Sheets) == 0 {
+		return 0, "", fmt.Errorf("spreadsheet %s has no sheets", spreadsheetID)
+	}
+
+	if title == "" {
+		first := spreadsheet.Sheets[0]
+		for _, sheet := range spreadsheet.Sheets {
+			if sheet.Properties != nil && sheet.Properties.Index == 0 {
+				first = sheet
+				break
+			}
+		}
+		if first.Properties == nil {
+			return 0, "", fmt.Errorf("spreadsheet %s has no sheet properties", spreadsheetID)
+		}
+		return first.Properties.SheetId, first.Properties.Title, nil
+	}
+
+	for _, sheet := range spreadsheet.Sheets {
+		if sheet.Properties != nil && sheet.Properties.Title == title {
+			return sheet.Properties.SheetId, sheet.Properties.Title, nil
+		}
+	}
+	// Fall back to a case-insensitive match before giving up
+	for _, sheet := range spreadsheet.Sheets {
+		if sheet.Properties != nil && strings.EqualFold(sheet.Properties.Title, title) {
+			return sheet.Properties.SheetId, sheet.Properties.Title, nil
+		}
+	}
+
+	return 0, "", fmt.Errorf("sheet %q not found in spreadsheet %s", title, spreadsheetID)
+}
+
+// FormatCells applies a formatting-only repeatCell request to a range. The
+// field mask is always scoped to userEnteredFormat and the cell may not carry a
+// value, so cell values and formulas are never modified.
+func (c *Client) FormatCells(spreadsheetID string, gridRange *sheets.GridRange, cell *sheets.CellData, fields string) error {
+	if cell != nil && cell.UserEnteredValue != nil {
+		return fmt.Errorf("invalid request: formatting must not carry a cell value")
+	}
+	if err := validateFormatFieldMask(fields); err != nil {
+		return err
+	}
+
+	if _, err := c.batchUpdate(spreadsheetID, repeatCellRequest(gridRange, cell, fields)); err != nil {
+		return fmt.Errorf("failed to format cells: %w", err)
+	}
+	return nil
+}
+
+// GetCellFormats reads the formatting a range carries. The selector asks for
+// userEnteredFormat, what the cells hold, rather than the resolved
+// effectiveFormat, so formatting inherited from the sheet or applied by a
+// conditional format rule is not included. It also keeps the response to
+// formatting, so no cell values are fetched.
+func (c *Client) GetCellFormats(spreadsheetID, a1Range string) (*sheets.Spreadsheet, error) {
+	spreadsheet, err := c.service.Spreadsheets.Get(spreadsheetID).
+		Ranges(a1Range).
+		IncludeGridData(true).
+		Fields(readFormatFieldMask).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cell formats: %w", err)
+	}
+	return spreadsheet, nil
+}

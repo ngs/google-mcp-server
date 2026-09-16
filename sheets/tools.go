@@ -323,6 +323,98 @@ func defaultSheetsTools() []server.Tool {
 				Required: []string{"spreadsheet_id", "range"},
 			},
 		},
+		{
+			Name: "sheets_cells_format",
+			Description: "Apply cell formatting (background color, text style, alignment, number format) to a range. " +
+				"Only formatting is changed; cell values and formulas are never modified",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"spreadsheet_id": {
+						Type:        "string",
+						Description: "Spreadsheet ID",
+					},
+					"range": {
+						Type: "string",
+						Description: "Range to format, as a cell range (B46:H51), whole columns (B:H), whole rows (46:51), " +
+							"or a bare sheet title for the whole sheet. Include the sheet title when the spreadsheet has " +
+							"more than one sheet (for example 'Quote v2'!B46:H51); without it the first sheet is used. " +
+							"Both ends of a range must be the same shape, so write B46:H51 rather than the open-ended B46:H",
+					},
+					"background_color": colorProperty("Cell background color (optional)"),
+					"text_format": {
+						Type:        "object",
+						Description: "Text style to apply (optional). Every field is optional and unset fields are left untouched",
+						Properties: map[string]server.Property{
+							"bold": {
+								Type:        "boolean",
+								Description: "Bold text. Pass false to remove an existing bold style",
+							},
+							"italic": {
+								Type:        "boolean",
+								Description: "Italic text. Pass false to remove an existing italic style",
+							},
+							"font_size": {
+								Type:        "number",
+								Description: "Font size in points, as a positive whole number",
+							},
+							"foreground_color": colorProperty("Text color (optional)"),
+						},
+					},
+					"horizontal_alignment": {
+						Type:        "string",
+						Description: "Horizontal alignment of the cell contents (optional)",
+						Enum:        horizontalAlignments,
+					},
+					"number_format": {
+						Type:        "object",
+						Description: "Number format to apply (optional)",
+						Properties: map[string]server.Property{
+							"type": {
+								Type:        "string",
+								Description: "Number format type",
+								Enum:        numberFormatTypes,
+							},
+							"pattern": {
+								Type:        "string",
+								Description: "Format pattern, such as #,##0.00 (optional)",
+							},
+						},
+						Required: []string{"type"},
+					},
+					"clear": {
+						Type: "boolean",
+						Description: "Reset all formatting in the range (optional). Cannot be combined with the other " +
+							"formatting options. Cell values are kept",
+					},
+				},
+				Required: []string{"spreadsheet_id", "range"},
+			},
+		},
+
+		{
+			Name: "sheets_cells_get_format",
+			Description: "Read the formatting a range carries (background color, text style, alignment, number format). " +
+				"Only formatting is returned; cell values are not read. Reports what is set on the cells themselves, " +
+				"so formatting inherited from the sheet or applied by a conditional format rule is not included, and " +
+				"a bold or italic style that is explicitly turned off is reported the same as one that was never set",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"spreadsheet_id": {
+						Type:        "string",
+						Description: "Spreadsheet ID",
+					},
+					"range": {
+						Type: "string",
+						Description: "Bounded A1 notation range to read, such as B46:H51. Open ended ranges and whole " +
+							"sheets are refused so the response stays small. Include the sheet title when the " +
+							"spreadsheet has more than one sheet; without it the first sheet is used",
+					},
+				},
+				Required: []string{"spreadsheet_id", "range"},
+			},
+		},
 	}
 }
 
@@ -617,6 +709,106 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 		result := map[string]interface{}{
 			"spreadsheetId": response.SpreadsheetId,
 			"clearedRange":  response.ClearedRange,
+		}
+		return result, nil
+
+	case "sheets_cells_format":
+		var args formatArgs
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		sheetTitle, gridRange, err := parseA1Range(args.Range)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		// Validate the arguments before spending an API call on resolving the
+		// sheet, so a bad color is reported as a bad color rather than as
+		// whatever error the lookup happens to return
+		request, fields, err := buildFormatRequest(gridRange, args)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		sheetID, resolvedTitle, err := h.client.resolveSheetID(args.SpreadsheetID, sheetTitle)
+		if err != nil {
+			return nil, err
+		}
+		// The request holds this same pointer, so it picks the id up too
+		gridRange.SheetId = sheetID
+		// SheetId may legitimately be 0 (the default sheet)
+		gridRange.ForceSendFields = append(gridRange.ForceSendFields, "SheetId")
+
+		if err := h.client.FormatCells(args.SpreadsheetID, gridRange, request.RepeatCell.Cell, fields); err != nil {
+			return nil, err
+		}
+
+		return map[string]interface{}{
+			"spreadsheetId": args.SpreadsheetID,
+			"sheetId":       sheetID,
+			"sheetTitle":    resolvedTitle,
+			"range":         formatGridRange(gridRange),
+			"fields":        fields,
+		}, nil
+
+	case "sheets_cells_get_format":
+		var args struct {
+			SpreadsheetID string `json:"spreadsheet_id"`
+			Range         string `json:"range"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		if args.Range == "" {
+			return nil, fmt.Errorf("invalid arguments: range is required")
+		}
+
+		// Size the range before fetching it. Checking after the call would let an
+		// unbounded read happen anyway, and the number of cells the API returns
+		// is not the number requested: trailing unformatted cells are omitted
+		sheetTitle, requested, err := parseA1Range(args.Range)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		cells, known := countGridCells(requested)
+		if !known {
+			return nil, fmt.Errorf("range %q is open ended; read a bounded range such as B46:H51 so the response stays small", args.Range)
+		}
+		if cells > maxReadFormatCells {
+			return nil, fmt.Errorf("range %q covers %d cells, more than the %d this tool reads at once; read a smaller range",
+				args.Range, cells, maxReadFormatCells)
+		}
+
+		// Send the parsed range rather than the caller's string, so the range
+		// that was validated is the one that gets read
+		canonical := gridRangeToA1(sheetTitle, requested)
+		spreadsheet, err := h.client.GetCellFormats(args.SpreadsheetID, canonical)
+		if err != nil {
+			return nil, err
+		}
+		if len(spreadsheet.Sheets) == 0 {
+			return nil, fmt.Errorf("no sheet returned for range %q", args.Range)
+		}
+
+		sheet := spreadsheet.Sheets[0]
+
+		result := map[string]interface{}{
+			"spreadsheetId": args.SpreadsheetID,
+			"range":         canonical,
+			"cells":         []interface{}{},
+		}
+		// A range of entirely unstyled cells comes back with no grid data at
+		// all, which is an empty result rather than an error
+		if len(sheet.Data) > 0 {
+			grid := sheet.Data[0]
+			result["startRow"] = grid.StartRow
+			result["startColumn"] = grid.StartColumn
+			result["cells"] = summarizeGridData(grid)
+		}
+		if sheet.Properties != nil {
+			result["sheetId"] = sheet.Properties.SheetId
+			result["sheetTitle"] = sheet.Properties.Title
 		}
 		return result, nil
 

@@ -45,12 +45,18 @@ type InputSchema struct {
 	Required   []string            `json:"required,omitempty"`
 }
 
-// Property represents a property in the input schema
+// Property represents a property in the input schema. Properties and Required
+// describe a nested object schema and are omitted for scalar properties. AnyOf
+// describes a property that accepts more than one shape, and replaces Type
+// rather than joining it, since a union cannot also claim a single type.
 type Property struct {
-	Type        string    `json:"type"`
-	Description string    `json:"description"`
-	Items       *Property `json:"items,omitempty"`
-	Enum        []string  `json:"enum,omitempty"`
+	Type        string              `json:"type,omitempty"`
+	Description string              `json:"description"`
+	Items       *Property           `json:"items,omitempty"`
+	Enum        []string            `json:"enum,omitempty"`
+	Properties  map[string]Property `json:"properties,omitempty"`
+	Required    []string            `json:"required,omitempty"`
+	AnyOf       []Property          `json:"anyOf,omitempty"`
 }
 
 // Resource represents an MCP resource
