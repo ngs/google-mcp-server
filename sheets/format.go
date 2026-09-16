@@ -3,7 +3,6 @@ package sheets
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -562,93 +561,6 @@ func colorProperty(description string) server.Property {
 	}
 }
 
-// readFormatFieldMask limits the spreadsheets.get response to cell formatting.
-// Grid data would otherwise carry the cell values too, which this tool has no
-// reason to read.
-const readFormatFieldMask = "sheets(properties(sheetId,title)," +
-	"data(startRow,startColumn,rowData(values(effectiveFormat))))"
-
-// maxReadFormatCells caps how many cells one read returns, so a whole-column
-// range cannot produce an unreadable response.
-const maxReadFormatCells = 2000
-
-// colorStyleToHex renders a color as #RRGGBB. It returns an empty string for a
-// theme color or a missing value, which have no literal rgb components.
-func colorStyleToHex(style *sheets.ColorStyle) string {
-	if style == nil || style.RgbColor == nil {
-		return ""
-	}
-
-	component := func(value float64) int {
-		scaled := int(math.Round(value * 255))
-		if scaled < 0 {
-			return 0
-		}
-		if scaled > 255 {
-			return 255
-		}
-		return scaled
-	}
-
-	rgb := style.RgbColor
-	return fmt.Sprintf("#%02X%02X%02X", component(rgb.Red), component(rgb.Green), component(rgb.Blue))
-}
-
-// summarizeCellFormat renders the formatting of one cell, leaving out anything
-// that is not set so an unstyled cell reports nothing at all.
-func summarizeCellFormat(format *sheets.CellFormat) map[string]interface{} {
-	summary := map[string]interface{}{}
-	if format == nil {
-		return summary
-	}
-
-	if hex := colorStyleToHex(format.BackgroundColorStyle); hex != "" {
-		summary["backgroundColor"] = hex
-	}
-	if format.HorizontalAlignment != "" {
-		summary["horizontalAlignment"] = format.HorizontalAlignment
-	}
-	if number := format.NumberFormat; number != nil && (number.Type != "" || number.Pattern != "") {
-		rendered := map[string]interface{}{}
-		if number.Type != "" {
-			rendered["type"] = number.Type
-		}
-		if number.Pattern != "" {
-			rendered["pattern"] = number.Pattern
-		}
-		summary["numberFormat"] = rendered
-	}
-	if text := format.TextFormat; text != nil {
-		if text.Bold {
-			summary["bold"] = true
-		}
-		if text.Italic {
-			summary["italic"] = true
-		}
-		if text.FontSize != 0 {
-			summary["fontSize"] = text.FontSize
-		}
-		if hex := colorStyleToHex(text.ForegroundColorStyle); hex != "" {
-			summary["foregroundColor"] = hex
-		}
-	}
-
-	return summary
-}
-
-// summarizeGridData renders the formatting of a returned grid, row by row.
-func summarizeGridData(grid *sheets.GridData) []interface{} {
-	rows := make([]interface{}, 0, len(grid.RowData))
-	for _, row := range grid.RowData {
-		cells := make([]interface{}, 0, len(row.Values))
-		for _, cell := range row.Values {
-			cells = append(cells, summarizeCellFormat(cell.EffectiveFormat))
-		}
-		rows = append(rows, cells)
-	}
-	return rows
-}
-
 // looksLikeCellRange reports whether an unqualified A1 string is a cell
 // reference rather than a bare sheet title. Every side has to parse as a cell
 // reference for it to count, so "Sheet1" and "'Sheet 1'" fall through to being
@@ -690,62 +602,4 @@ func lastUnquotedBang(a1 string) int {
 	}
 
 	return last
-}
-
-// countGridCells returns how many cells a grid range covers, and whether that
-// number is known at all. A range left open on either axis, such as a whole
-// column or a whole sheet, has no known size.
-func countGridCells(grid *sheets.GridRange) (int64, bool) {
-	forced := make(map[string]bool, len(grid.ForceSendFields))
-	for _, name := range grid.ForceSendFields {
-		forced[name] = true
-	}
-	if !forced["StartRowIndex"] || !forced["StartColumnIndex"] {
-		return 0, false
-	}
-
-	rows := grid.EndRowIndex - grid.StartRowIndex
-	columns := grid.EndColumnIndex - grid.StartColumnIndex
-	if rows <= 0 || columns <= 0 {
-		return 0, false
-	}
-	// Saturate rather than wrap: an overflowing product would come out small
-	// enough to pass the size limit it is meant to fail
-	if rows > math.MaxInt64/columns {
-		return math.MaxInt64, true
-	}
-
-	return rows * columns, true
-}
-
-// indexToColumnLabel converts a zero-based column index back into its label:
-// 0 is "A", 25 is "Z" and 26 is "AA".
-func indexToColumnLabel(index int64) string {
-	label := make([]byte, 0, maxColumnLabelLength)
-	for index >= 0 {
-		label = append([]byte{byte('A' + index%26)}, label...)
-		index = index/26 - 1
-	}
-	return string(label)
-}
-
-// quoteSheetTitle wraps a sheet title in single quotes, doubling any quote it
-// contains. Quoting unconditionally keeps titles with spaces, bangs or
-// non-ASCII characters intact.
-func quoteSheetTitle(title string) string {
-	return "'" + strings.ReplaceAll(title, "'", "''") + "'"
-}
-
-// gridRangeToA1 renders a parsed range back into A1 notation. The read path
-// sends this instead of the caller's original string, so the range that was
-// validated is the range that gets read.
-func gridRangeToA1(title string, grid *sheets.GridRange) string {
-	reference := fmt.Sprintf("%s%d:%s%d",
-		indexToColumnLabel(grid.StartColumnIndex), grid.StartRowIndex+1,
-		indexToColumnLabel(grid.EndColumnIndex-1), grid.EndRowIndex)
-
-	if title == "" {
-		return reference
-	}
-	return quoteSheetTitle(title) + "!" + reference
 }

@@ -186,7 +186,6 @@ Download pre-built binaries from the [releases page](https://github.com/ngs/goog
 - `sheets_dimension_insert` - Insert rows or columns into a sheet
 - `sheets_dimension_delete` - Delete rows or columns from a sheet (destructive)
 - `sheets_cells_format` - Apply cell formatting (background color, text style, alignment, number format) without touching values
-- `sheets_cells_get_format` - Read the formatting of a range without reading its values
 
 All Sheets tools support the `account` parameter.
 
