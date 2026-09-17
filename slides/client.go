@@ -971,9 +971,16 @@ func generateId() string {
 }
 
 // CreateSlideFromLayout creates one slide from an existing layout and fills its
-// placeholders, in a single batchUpdate. The layout is resolved strictly and
-// every requested placeholder is checked against it first, because a mapping
-// the layout does not define fails the whole batch.
+// placeholders. The layout is resolved strictly and every requested placeholder
+// is checked against it first, because a mapping the layout does not define
+// fails the whole batch.
+//
+// The requests go out in a single batchUpdate while they stay within
+// maxRequestsPerBatch, which covers every realistic layout, and are split
+// across calls when they do not. A split is not atomic: if a later call fails,
+// the slide the first one created is deleted so the deck is left as it was, but
+// there is a window in which it exists half filled, and a cleanup that itself
+// fails is logged rather than returned.
 func (c *Client) CreateSlideFromLayout(presentationId string, input slideFromLayoutInput) (*slideFromLayoutResult, error) {
 	if err := validatePlaceholderRequests(input.placeholders); err != nil {
 		return nil, fmt.Errorf("invalid arguments: %w", err)

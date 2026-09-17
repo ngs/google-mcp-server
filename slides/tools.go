@@ -1042,9 +1042,11 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 		var typed struct {
 			PresentationID string `json:"presentation_id"`
 			Replacements   []struct {
-				Find      string `json:"find"`
-				Replace   string `json:"replace"`
-				MatchCase bool   `json:"match_case"`
+				Find string `json:"find"`
+				// A pointer so an omitted field can be told from an explicit
+				// empty string, which means delete the token
+				Replace   *string `json:"replace"`
+				MatchCase bool    `json:"match_case"`
 			} `json:"replacements"`
 			PageObjectIDs []string `json:"page_object_ids"`
 		}
@@ -1053,12 +1055,13 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 		}
 
 		replacements := make([]textReplacement, 0, len(typed.Replacements))
-		for _, r := range typed.Replacements {
-			replacements = append(replacements, textReplacement{
-				find:      r.Find,
-				replace:   r.Replace,
-				matchCase: r.MatchCase,
-			})
+		for i, r := range typed.Replacements {
+			replacement, err := requireReplacement(i, r.Find, r.Replace)
+			if err != nil {
+				return nil, fmt.Errorf("invalid arguments: %w", err)
+			}
+			replacement.matchCase = r.MatchCase
+			replacements = append(replacements, replacement)
 		}
 
 		result, err := client.ReplaceAllText(typed.PresentationID, replacements, typed.PageObjectIDs)
@@ -1089,20 +1092,27 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 		var typed struct {
 			PresentationID string   `json:"presentation_id"`
 			SlideObjectIDs []string `json:"slide_object_ids"`
-			InsertionIndex int64    `json:"insertion_index"`
+			// A pointer so an omitted field can be told from position 0, which
+			// is a real move to the front of the deck
+			InsertionIndex *int64 `json:"insertion_index"`
 		}
 		if err := json.Unmarshal(arguments, &typed); err != nil {
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 
-		if _, err := client.UpdateSlidesPosition(typed.PresentationID, typed.SlideObjectIDs, typed.InsertionIndex); err != nil {
+		insertionIndex, err := requireInsertionIndex(typed.InsertionIndex)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		if _, err := client.UpdateSlidesPosition(typed.PresentationID, typed.SlideObjectIDs, insertionIndex); err != nil {
 			return nil, err
 		}
 
 		return map[string]interface{}{
 			"presentation_id":  typed.PresentationID,
 			"slide_object_ids": typed.SlideObjectIDs,
-			"insertion_index":  typed.InsertionIndex,
+			"insertion_index":  insertionIndex,
 			"moved":            true,
 		}, nil
 

@@ -3,6 +3,7 @@ package slides
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/api/slides/v1"
@@ -348,10 +349,45 @@ func updateSlidesPositionRequests(slideObjectIds []string, insertionIndex int64)
 	}}
 }
 
+// templateObjectIdCounter makes every prefix distinct without relying on the
+// clock. A prefix built from the time alone repeats whenever two calls land
+// inside the platform's clock resolution, which on Windows is coarse enough
+// that two slides created in succession were given the same placeholder IDs.
+var templateObjectIdCounter atomic.Uint64
+
 // newTemplateObjectIdPrefix mirrors newObjectIdPrefix: a per-run prefix so
-// generated IDs cannot collide with objects already in the presentation.
+// generated IDs cannot collide with objects already in the presentation. The
+// counter also keeps two calls in the same process apart from each other.
 func newTemplateObjectIdPrefix() string {
-	return fmt.Sprintf("tpl%d", time.Now().UnixNano())
+	return fmt.Sprintf("tpl%dx%d", time.Now().UnixNano(), templateObjectIdCounter.Add(1))
+}
+
+// requireInsertionIndex reads an insertion index that the schema marks as
+// required. Taking it as a plain int64 would turn an omitted field into 0,
+// which is a real position: a malformed call would quietly move slides to the
+// front of the deck instead of being reported.
+func requireInsertionIndex(index *int64) (int64, error) {
+	if index == nil {
+		return 0, fmt.Errorf("insertion_index is required")
+	}
+	if *index < 0 {
+		return 0, fmt.Errorf("insertion_index must be 0 or greater")
+	}
+	return *index, nil
+}
+
+// requireReplacement builds one substitution, insisting that replace was
+// actually given. An empty string is a deletion and is allowed, but an omitted
+// field unmarshals to the same empty string, so without the pointer a caller
+// who forgot the field would silently delete the token instead.
+func requireReplacement(position int, find string, replace *string) (textReplacement, error) {
+	if find == "" {
+		return textReplacement{}, fmt.Errorf("replacement %d has an empty find string", position)
+	}
+	if replace == nil {
+		return textReplacement{}, fmt.Errorf("replacement %d has no replace string; pass an empty string to delete the token", position)
+	}
+	return textReplacement{find: find, replace: *replace}, nil
 }
 
 // formatLayouts renders the masters, layouts and placeholders of a deck for the
