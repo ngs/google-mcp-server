@@ -212,8 +212,42 @@ All Sheets tools support the `account` parameter.
 - `slides_set_layout` - Set slide layout (supports `account` parameter)
 - `slides_export_pdf` - Export presentation as PDF (supports `account` parameter)
 - `slides_share` - Create shareable link (supports `account` parameter)
+- `slides_layouts_list` - List masters, layouts and their placeholders (supports `account` parameter)
+- `slides_slide_create_from_layout` - Create a slide from a layout and fill its placeholders (supports `account` parameter)
+- `slides_replace_all_text` - Replace text tokens across the deck (supports `account` parameter)
+- `slides_slide_reorder` - Move slides to a new position (supports `account` parameter)
 
 ## Usage Examples
+
+### Filling a Slides Template
+
+Build a deck from a designer-made template by writing into the layouts it already
+defines, instead of placing new text boxes. The template keeps ownership of the
+design, so the result cannot drift out of alignment.
+
+1. **See what the template offers**:
+   - Call `slides_layouts_list` with the presentation ID
+   - It returns each layout with its display name, API name and placeholders, as
+     `type` and `index` pairs such as `TITLE[0]` and `BODY[0]`
+
+2. **Create a slide from a layout**:
+   - Call `slides_slide_create_from_layout` with the layout name and the
+     placeholders to fill:
+
+   ```json
+   {
+     "presentation_id": "1AbC...",
+     "layout_name": "Title and body",
+     "placeholders": [
+       { "type": "TITLE", "text": "Quarterly review" },
+       { "type": "BODY", "text": "Revenue up\nChurn down\nTwo hires", "bullets": true }
+     ]
+   }
+   ```
+
+   No shape is created and nothing existing is moved or restyled. Text is inserted
+   as written, so Markdown markers are not interpreted.
+
 
 ### Multi-Account Support
 
