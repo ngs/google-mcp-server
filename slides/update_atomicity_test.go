@@ -117,6 +117,9 @@ type fakeSlidesAPI struct {
 	// failCreateAfter, when non-zero, lets that many slides be created before
 	// failing, so tests can exercise a rebuild that dies partway through
 	failCreateAfter int
+	// failBatchAfter, when non-zero, fails every batchUpdate after that many
+	// have succeeded, so a chunked operation can be made to die midway
+	failBatchAfter int
 }
 
 func (f *fakeSlidesAPI) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -165,6 +168,10 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 		f.styled = styledBefore
 		return jsonResponse(status,
 			map[string]any{"error": map[string]any{"code": status, "message": message}})
+	}
+
+	if f.failBatchAfter > 0 && f.batches > f.failBatchAfter {
+		return fail(http.StatusInternalServerError, "boom")
 	}
 
 	replies := make([]*slides.Response, 0, len(parsed.Requests))

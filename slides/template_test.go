@@ -688,3 +688,140 @@ func TestValidateSlideObjectIds(t *testing.T) {
 		t.Errorf("a valid reorder should pass, got %v", err)
 	}
 }
+
+// TestCreateSlideFromLayoutChunksOversizedBatches covers a layout with more
+// placeholders than fit in one batchUpdate. The cap is lowered rather than
+// building an absurd layout.
+func TestCreateSlideFromLayoutChunksOversizedBatches(t *testing.T) {
+	withMaxRequestsPerBatch(t, 3)
+	client, fake := newFakeClient(t, 0)
+
+	// One createSlide plus three insertText is four requests, over the cap
+	result, err := client.CreateSlideFromLayout("test-presentation", slideFromLayoutInput{
+		layoutId: "layout-two-columns",
+		placeholders: []placeholderRequest{
+			{kind: "TITLE", text: "Two columns"},
+			{kind: "BODY", index: 0, text: "Left"},
+			{kind: "BODY", index: 1, text: "Right"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateSlideFromLayout returned an error: %v", err)
+	}
+
+	if fake.batches < 2 {
+		t.Errorf("four requests under a cap of three should span %d batches, want at least 2", fake.batches)
+	}
+	for i, size := range fake.batchSizes {
+		if size > 3 {
+			t.Errorf("batch %d carried %d requests, over the cap of 3", i, size)
+		}
+	}
+
+	if len(fake.slides) != 1 {
+		t.Fatalf("expected one slide, got %d", len(fake.slides))
+	}
+	// Every placeholder still received its text despite the split
+	for _, want := range []string{"Two columns", "Left", "Right"} {
+		found := false
+		for _, got := range fake.text {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("text %q never reached the deck", want)
+		}
+	}
+	if result.slideId == "" {
+		t.Error("the result should name the slide it created")
+	}
+}
+
+// TestCreateSlideFromLayoutCleansUpAfterChunkFailure checks the deck is not
+// left holding a half-filled slide when a later chunk fails.
+func TestCreateSlideFromLayoutCleansUpAfterChunkFailure(t *testing.T) {
+	withMaxRequestsPerBatch(t, 2)
+	client, fake := newFakeClient(t, 1)
+	// The first batch carries the createSlide and succeeds; the next one fails
+	fake.failBatchAfter = 1
+
+	_, err := client.CreateSlideFromLayout("test-presentation", slideFromLayoutInput{
+		layoutId: "layout-two-columns",
+		placeholders: []placeholderRequest{
+			{kind: "TITLE", text: "Two columns"},
+			{kind: "BODY", index: 0, text: "Left"},
+			{kind: "BODY", index: 1, text: "Right"},
+		},
+	})
+	if err == nil {
+		t.Fatal("CreateSlideFromLayout should have reported the failure")
+	}
+
+	// Whatever happened, the caller's deck is back to the one slide it had
+	if len(fake.slides) != 1 {
+		t.Errorf("deck holds %d slides, want the original 1", len(fake.slides))
+	}
+}
+
+// TestReplaceAllTextRespectsPageScope is the end-to-end check that a scoped
+// replacement does not leak into slides the caller did not name.
+func TestReplaceAllTextRespectsPageScope(t *testing.T) {
+	client, fake := newFakeClient(t, 0)
+
+	first, err := client.CreateSlideFromLayout("test-presentation", slideFromLayoutInput{
+		layoutId:     "layout-title-only",
+		placeholders: []placeholderRequest{{kind: "TITLE", text: "{{token}} on the first slide"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateSlideFromLayout returned an error: %v", err)
+	}
+	second, err := client.CreateSlideFromLayout("test-presentation", slideFromLayoutInput{
+		layoutId:     "layout-title-only",
+		placeholders: []placeholderRequest{{kind: "TITLE", text: "{{token}} on the second slide"}},
+	})
+	if err != nil {
+		t.Fatalf("CreateSlideFromLayout returned an error: %v", err)
+	}
+
+	result, err := client.ReplaceAllText("test-presentation",
+		[]textReplacement{{find: "{{token}}", replace: "REPLACED", matchCase: true}},
+		[]string{first.slideId})
+	if err != nil {
+		t.Fatalf("ReplaceAllText returned an error: %v", err)
+	}
+
+	if result.total != 1 {
+		t.Errorf("replaced %d occurrences, want only the one on the named slide", result.total)
+	}
+
+	firstText := textOnSlide(t, fake, first.slideId)
+	if !strings.Contains(firstText, "REPLACED") {
+		t.Errorf("the named slide should have been changed, got %q", firstText)
+	}
+	secondText := textOnSlide(t, fake, second.slideId)
+	if !strings.Contains(secondText, "{{token}}") {
+		t.Errorf("the other slide should be untouched, got %q", secondText)
+	}
+}
+
+// textOnSlide joins whatever text the fake recorded for the elements of a slide.
+func textOnSlide(t *testing.T, fake *fakeSlidesAPI, slideId string) string {
+	t.Helper()
+
+	for _, page := range fake.slides {
+		if page.ObjectId != slideId {
+			continue
+		}
+		var parts []string
+		for _, element := range page.PageElements {
+			if got, ok := fake.text[element.ObjectId]; ok {
+				parts = append(parts, got)
+			}
+		}
+		return strings.Join(parts, " ")
+	}
+
+	t.Fatalf("slide %q is not in the deck", slideId)
+	return ""
+}
