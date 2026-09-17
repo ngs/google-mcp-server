@@ -826,3 +826,65 @@ func textOnSlide(t *testing.T, fake *fakeSlidesAPI, slideId string) string {
 	t.Fatalf("slide %q is not in the deck", slideId)
 	return ""
 }
+
+// TestNewTemplateObjectIdPrefixIsUniquePerCall is a regression test for a
+// Windows CI failure: the prefix was built from the clock alone, and on a
+// platform whose clock does not advance between two quick calls, two slides
+// were given the same placeholder object IDs. The second slide then wrote over
+// the first, and a replacement scoped to one page reached both.
+func TestNewTemplateObjectIdPrefixIsUniquePerCall(t *testing.T) {
+	const runs = 1000
+	seen := make(map[string]bool, runs)
+
+	for i := 0; i < runs; i++ {
+		prefix := newTemplateObjectIdPrefix()
+		if seen[prefix] {
+			t.Fatalf("prefix %q was handed out twice; uniqueness cannot depend on the clock advancing", prefix)
+		}
+		seen[prefix] = true
+
+		if !objectIdPattern.MatchString(prefix + "-ph1") {
+			t.Fatalf("prefix %q builds an object ID the API would reject", prefix)
+		}
+	}
+}
+
+func TestRequireInsertionIndex(t *testing.T) {
+	if _, err := requireInsertionIndex(nil); err == nil {
+		t.Error("an omitted insertion_index should be rejected rather than read as 0")
+	}
+
+	var negative int64 = -1
+	if _, err := requireInsertionIndex(&negative); err == nil {
+		t.Error("a negative insertion_index should be rejected")
+	}
+
+	var front int64
+	got, err := requireInsertionIndex(&front)
+	if err != nil {
+		t.Fatalf("0 is a valid position: %v", err)
+	}
+	if got != 0 {
+		t.Errorf("insertion index = %d, want 0", got)
+	}
+}
+
+func TestRequireReplacement(t *testing.T) {
+	if _, err := requireReplacement(0, "{{title}}", nil); err == nil {
+		t.Error("an omitted replace should be rejected rather than read as a deletion")
+	}
+
+	empty := ""
+	got, err := requireReplacement(0, "{{title}}", &empty)
+	if err != nil {
+		t.Fatalf("an explicit empty replacement is a deletion and is allowed: %v", err)
+	}
+	if got.find != "{{title}}" || got.replace != "" {
+		t.Errorf("replacement = %+v", got)
+	}
+
+	text := "Hello"
+	if _, err := requireReplacement(0, "", &text); err == nil {
+		t.Error("an empty find should be rejected")
+	}
+}
