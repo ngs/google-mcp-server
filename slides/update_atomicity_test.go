@@ -117,9 +117,10 @@ type fakeSlidesAPI struct {
 	// failCreateAfter, when non-zero, lets that many slides be created before
 	// failing, so tests can exercise a rebuild that dies partway through
 	failCreateAfter int
-	// failBatchAfter, when non-zero, fails every batchUpdate after that many
-	// have succeeded, so a chunked operation can be made to die midway
-	failBatchAfter int
+	// failBatchNumber, when non-zero, fails exactly that batchUpdate call, so a
+	// chunked operation can be made to die midway while later calls, such as
+	// the cleanup that follows, still go through
+	failBatchNumber int
 }
 
 func (f *fakeSlidesAPI) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -170,7 +171,7 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 			map[string]any{"error": map[string]any{"code": status, "message": message}})
 	}
 
-	if f.failBatchAfter > 0 && f.batches > f.failBatchAfter {
+	if f.failBatchNumber > 0 && f.batches == f.failBatchNumber {
 		return fail(http.StatusInternalServerError, "boom")
 	}
 
@@ -282,14 +283,20 @@ func (f *fakeSlidesAPI) recordText(req *slides.InsertTextRequest) {
 }
 
 // replaceText applies a replaceAllText across the recorded shape text and
-// reports how many occurrences changed, the way the real API does.
+// reports how many occurrences changed, the way the real API does. A request
+// naming pages only touches shapes on those pages, so a test can tell a scoped
+// replacement from one that leaks across the deck.
 func (f *fakeSlidesAPI) replaceText(req *slides.ReplaceAllTextRequest) int64 {
 	if req.ContainsText == nil || req.ContainsText.Text == "" {
 		return 0
 	}
 	find := req.ContainsText.Text
+	scope := f.shapesOnPages(req.PageObjectIds)
 	var changed int64
 	for key, value := range f.text {
+		if scope != nil && !scope[key] {
+			continue
+		}
 		if req.ContainsText.MatchCase {
 			n := strings.Count(value, find)
 			if n == 0 {
@@ -307,6 +314,37 @@ func (f *fakeSlidesAPI) replaceText(req *slides.ReplaceAllTextRequest) int64 {
 		f.text[key] = caseInsensitiveReplace(value, find, req.ReplaceText)
 	}
 	return changed
+}
+
+// shapesOnPages returns the set of shape keys that live on the given pages, or
+// nil when the request names no pages and therefore covers the whole deck.
+func (f *fakeSlidesAPI) shapesOnPages(pageObjectIds []string) map[string]bool {
+	if len(pageObjectIds) == 0 {
+		return nil
+	}
+
+	wanted := make(map[string]bool, len(pageObjectIds))
+	for _, id := range pageObjectIds {
+		wanted[id] = true
+	}
+
+	scope := map[string]bool{}
+	for _, page := range f.slides {
+		if !wanted[page.ObjectId] {
+			continue
+		}
+		for _, element := range page.PageElements {
+			scope[element.ObjectId] = true
+			// Table cells are recorded under a composite key
+			for key := range f.text {
+				if strings.HasPrefix(key, element.ObjectId+"[") {
+					scope[key] = true
+				}
+			}
+		}
+	}
+
+	return scope
 }
 
 func caseInsensitiveReplace(value, find, replace string) string {

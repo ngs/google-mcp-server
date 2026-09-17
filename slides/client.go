@@ -3,6 +3,7 @@ package slides
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -1022,8 +1023,8 @@ func (c *Client) CreateSlideFromLayout(presentationId string, input slideFromLay
 	}
 
 	requests := createSlideFromLayoutRequests(layout.ObjectId, slideObjectId, input.insertionIndex, fills, mappings)
-	if _, err := c.BatchUpdate(presentationId, requests); err != nil {
-		return nil, fmt.Errorf("failed to create slide from layout: %w", err)
+	if err := c.applySlideRequests(presentationId, slideObjectId, requests); err != nil {
+		return nil, err
 	}
 
 	return &slideFromLayoutResult{
@@ -1091,4 +1092,50 @@ func (c *Client) UpdateSlidesPosition(presentationId string, slideObjectIds []st
 		return nil, fmt.Errorf("failed to reorder slides: %w", err)
 	}
 	return response, nil
+}
+
+// applySlideRequests sends the requests that build one slide, splitting them
+// across batchUpdate calls if they exceed the batch cap. A layout with enough
+// placeholders, each of which can add a second request for bullets, could
+// otherwise build a batch the API rejects outright.
+//
+// The first chunk carries the createSlide, so the placeholders exist by the
+// time later chunks write into them. If a later chunk fails, the slide from the
+// first one is removed, leaving the deck as it was rather than holding a
+// half-filled slide.
+func (c *Client) applySlideRequests(presentationId, slideObjectId string, requests []*slides.Request) error {
+	if len(requests) <= maxRequestsPerBatch {
+		if _, err := c.BatchUpdate(presentationId, requests); err != nil {
+			return fmt.Errorf("failed to create slide from layout: %w", err)
+		}
+		return nil
+	}
+
+	created := false
+	for start := 0; start < len(requests); start += maxRequestsPerBatch {
+		end := start + maxRequestsPerBatch
+		if end > len(requests) {
+			end = len(requests)
+		}
+
+		if _, err := c.BatchUpdate(presentationId, requests[start:end]); err != nil {
+			if created {
+				c.removeSlide(presentationId, slideObjectId)
+			}
+			return fmt.Errorf("failed to create slide from layout: %w", err)
+		}
+		created = true
+	}
+
+	return nil
+}
+
+// removeSlide deletes a slide that was created as part of an operation which
+// then failed. A failure to clean up is reported rather than returned, because
+// the caller already has the error that matters.
+func (c *Client) removeSlide(presentationId, slideObjectId string) {
+	if _, err := c.BatchUpdate(presentationId, deleteSlideRequests(slideObjectId)); err != nil {
+		log.Printf("[WARNING] Failed to remove partially built slide %q; it may need deleting by hand: %v\n",
+			slideObjectId, err)
+	}
 }

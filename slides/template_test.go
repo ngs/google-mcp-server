@@ -743,8 +743,9 @@ func TestCreateSlideFromLayoutChunksOversizedBatches(t *testing.T) {
 func TestCreateSlideFromLayoutCleansUpAfterChunkFailure(t *testing.T) {
 	withMaxRequestsPerBatch(t, 2)
 	client, fake := newFakeClient(t, 1)
-	// The first batch carries the createSlide and succeeds; the next one fails
-	fake.failBatchAfter = 1
+	// The first batch carries the createSlide and succeeds, the second fails,
+	// and the cleanup that follows is allowed through
+	fake.failBatchNumber = 2
 
 	_, err := client.CreateSlideFromLayout("test-presentation", slideFromLayoutInput{
 		layoutId: "layout-two-columns",
