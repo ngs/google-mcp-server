@@ -3,6 +3,7 @@ package slides
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -967,4 +968,181 @@ func (c *Client) ApplyCodeFormattingToPlaceholder(presentationId string, shapeId
 func generateId() string {
 	// Simple ID generator - in production, use UUID or similar
 	return fmt.Sprintf("%d", time.Now().UnixNano())
+}
+
+// CreateSlideFromLayout creates one slide from an existing layout and fills its
+// placeholders. The layout is resolved strictly and every requested placeholder
+// is checked against it first, because a mapping the layout does not define
+// fails the whole batch.
+//
+// The requests go out in a single batchUpdate while they stay within
+// maxRequestsPerBatch, which covers every realistic layout, and are split
+// across calls when they do not. A split is not atomic: if a later call fails,
+// the slide the first one created is deleted so the deck is left as it was, but
+// there is a window in which it exists half filled, and a cleanup that itself
+// fails is logged rather than returned.
+func (c *Client) CreateSlideFromLayout(presentationId string, input slideFromLayoutInput) (*slideFromLayoutResult, error) {
+	if err := validatePlaceholderRequests(input.placeholders); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+	if input.insertionIndex != nil && *input.insertionIndex < 0 {
+		return nil, fmt.Errorf("invalid arguments: insertion_index must be 0 or greater")
+	}
+
+	presentation, err := c.GetPresentation(presentationId)
+	if err != nil {
+		return nil, err
+	}
+
+	layout, err := resolveLayout(presentation, input.layoutId, input.layoutName)
+	if err != nil {
+		return nil, err
+	}
+	available := layoutPlaceholdersOf(layout)
+
+	prefix := newTemplateObjectIdPrefix()
+	slideObjectId := input.slideObjectId
+	if slideObjectId == "" {
+		slideObjectId = prefix + "-slide"
+	}
+
+	fills := make([]placeholderFill, 0, len(input.placeholders))
+	mappings := make([]*slides.LayoutPlaceholderIdMapping, 0, len(input.placeholders))
+	for i, request := range input.placeholders {
+		target, err := findPlaceholder(available, request.kind, request.index)
+		if err != nil {
+			return nil, fmt.Errorf("layout %q %w", layoutLabel(layout), err)
+		}
+
+		objectId := fmt.Sprintf("%s-ph%d", prefix, i+1)
+		fills = append(fills, placeholderFill{
+			kind:         request.kind,
+			index:        request.index,
+			text:         request.text,
+			bullets:      request.bullets,
+			bulletPreset: request.bulletPreset,
+			objectId:     objectId,
+		})
+		mappings = append(mappings, &slides.LayoutPlaceholderIdMapping{
+			LayoutPlaceholderObjectId: target.objectId,
+			ObjectId:                  objectId,
+		})
+	}
+
+	requests := createSlideFromLayoutRequests(layout.ObjectId, slideObjectId, input.insertionIndex, fills, mappings)
+	if err := c.applySlideRequests(presentationId, slideObjectId, requests); err != nil {
+		return nil, err
+	}
+
+	return &slideFromLayoutResult{
+		slideId:        slideObjectId,
+		layoutId:       layout.ObjectId,
+		layoutName:     layoutLabel(layout),
+		insertionIndex: input.insertionIndex,
+		fills:          fills,
+		requestCount:   len(requests),
+	}, nil
+}
+
+// layoutLabel names a layout the way a person would recognise it, preferring
+// the designer's display name over the API name.
+func layoutLabel(layout *slides.Page) string {
+	if layout.LayoutProperties == nil {
+		return layout.ObjectId
+	}
+	if layout.LayoutProperties.DisplayName != "" {
+		return layout.LayoutProperties.DisplayName
+	}
+	if layout.LayoutProperties.Name != "" {
+		return layout.LayoutProperties.Name
+	}
+	return layout.ObjectId
+}
+
+// ReplaceAllText applies several replaceAllText requests in one batchUpdate and
+// reports how many occurrences each one changed.
+func (c *Client) ReplaceAllText(presentationId string, replacements []textReplacement, pageObjectIds []string) (*replaceAllTextResult, error) {
+	if err := validateReplacements(replacements); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	response, err := c.BatchUpdate(presentationId, replaceAllTextRequests(replacements, pageObjectIds))
+	if err != nil {
+		return nil, fmt.Errorf("failed to replace text: %w", err)
+	}
+
+	result := &replaceAllTextResult{perReplacement: make([]int64, len(replacements))}
+	for i := range replacements {
+		if i >= len(response.Replies) {
+			break
+		}
+		reply := response.Replies[i]
+		if reply == nil || reply.ReplaceAllText == nil {
+			continue
+		}
+		result.perReplacement[i] = reply.ReplaceAllText.OccurrencesChanged
+		result.total += reply.ReplaceAllText.OccurrencesChanged
+	}
+
+	return result, nil
+}
+
+// UpdateSlidesPosition moves slides to a new position, keeping the order they
+// were given in.
+func (c *Client) UpdateSlidesPosition(presentationId string, slideObjectIds []string, insertionIndex int64) (*slides.BatchUpdatePresentationResponse, error) {
+	if err := validateSlideObjectIds(slideObjectIds, insertionIndex); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	response, err := c.BatchUpdate(presentationId, updateSlidesPositionRequests(slideObjectIds, insertionIndex))
+	if err != nil {
+		return nil, fmt.Errorf("failed to reorder slides: %w", err)
+	}
+	return response, nil
+}
+
+// applySlideRequests sends the requests that build one slide, splitting them
+// across batchUpdate calls if they exceed the batch cap. A layout with enough
+// placeholders, each of which can add a second request for bullets, could
+// otherwise build a batch the API rejects outright.
+//
+// The first chunk carries the createSlide, so the placeholders exist by the
+// time later chunks write into them. If a later chunk fails, the slide from the
+// first one is removed, leaving the deck as it was rather than holding a
+// half-filled slide.
+func (c *Client) applySlideRequests(presentationId, slideObjectId string, requests []*slides.Request) error {
+	if len(requests) <= maxRequestsPerBatch {
+		if _, err := c.BatchUpdate(presentationId, requests); err != nil {
+			return fmt.Errorf("failed to create slide from layout: %w", err)
+		}
+		return nil
+	}
+
+	created := false
+	for start := 0; start < len(requests); start += maxRequestsPerBatch {
+		end := start + maxRequestsPerBatch
+		if end > len(requests) {
+			end = len(requests)
+		}
+
+		if _, err := c.BatchUpdate(presentationId, requests[start:end]); err != nil {
+			if created {
+				c.removeSlide(presentationId, slideObjectId)
+			}
+			return fmt.Errorf("failed to create slide from layout: %w", err)
+		}
+		created = true
+	}
+
+	return nil
+}
+
+// removeSlide deletes a slide that was created as part of an operation which
+// then failed. A failure to clean up is reported rather than returned, because
+// the caller already has the error that matters.
+func (c *Client) removeSlide(presentationId, slideObjectId string) {
+	if _, err := c.BatchUpdate(presentationId, deleteSlideRequests(slideObjectId)); err != nil {
+		log.Printf("[WARNING] Failed to remove partially built slide %q; it may need deleting by hand: %v\n",
+			slideObjectId, err)
+	}
 }

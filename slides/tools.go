@@ -429,6 +429,166 @@ func (s *Service) GetTools() []server.Tool {
 				Required: []string{"presentation_id", "role"},
 			},
 		},
+		{
+			Name:        "slides_layouts_list",
+			Description: "List the masters, layouts and their placeholders in a presentation, so a slide can be created from a designer-made layout instead of free-floating text boxes",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"presentation_id": {
+						Type:        "string",
+						Description: "Presentation ID",
+					},
+					"account": {
+						Type:        "string",
+						Description: "Email address of the account to use (optional)",
+					},
+				},
+				Required: []string{"presentation_id"},
+			},
+		},
+		{
+			Name:        "slides_slide_create_from_layout",
+			Description: "Create a slide from an existing layout and fill its placeholders with text. No shapes are created and no existing element is moved or restyled, so the template's design is preserved",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"presentation_id": {
+						Type:        "string",
+						Description: "Presentation ID",
+					},
+					"layout_id": {
+						Type:        "string",
+						Description: "Object ID of the layout to use. Give exactly one of layout_id or layout_name",
+					},
+					"layout_name": {
+						Type:        "string",
+						Description: "Display name or API name of the layout, matched exactly. Give exactly one of layout_id or layout_name",
+					},
+					"placeholders": {
+						Type:        "array",
+						Description: "Placeholders to fill. Use slides_layouts_list to see what a layout offers",
+						Items: &server.Property{
+							Type:        "object",
+							Description: "One placeholder fill",
+							Properties: map[string]server.Property{
+								"type": {
+									Type:        "string",
+									Description: "Placeholder type, such as TITLE, CENTERED_TITLE, SUBTITLE or BODY",
+								},
+								"index": {
+									Type:        "number",
+									Description: "Which placeholder of this type to fill, when the layout has more than one (optional, defaults to 0)",
+								},
+								"text": {
+									Type:        "string",
+									Description: "Text to insert. Newlines start new paragraphs. Inserted as written; Markdown is not interpreted",
+								},
+								"bullets": {
+									Type:        "boolean",
+									Description: "Turn the paragraphs into a bulleted list (optional)",
+								},
+								"bullet_preset": {
+									Type:        "string",
+									Description: "Bullet preset to use when bullets is true (optional, defaults to BULLET_DISC_CIRCLE_SQUARE)",
+								},
+							},
+							Required: []string{"type", "text"},
+						},
+					},
+					"insertion_index": {
+						Type:        "number",
+						Description: "Zero-based position for the new slide (optional, appended when omitted)",
+					},
+					"slide_object_id": {
+						Type:        "string",
+						Description: "Object ID to give the new slide (optional)",
+					},
+					"account": {
+						Type:        "string",
+						Description: "Email address of the account to use (optional)",
+					},
+				},
+				Required: []string{"presentation_id", "placeholders"},
+			},
+		},
+		{
+			Name:        "slides_replace_all_text",
+			Description: "Replace text tokens across a presentation or selected slides, for filling a template that uses markers such as {{title}}",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"presentation_id": {
+						Type:        "string",
+						Description: "Presentation ID",
+					},
+					"replacements": {
+						Type:        "array",
+						Description: "Token substitutions to apply",
+						Items: &server.Property{
+							Type:        "object",
+							Description: "One substitution",
+							Properties: map[string]server.Property{
+								"find": {
+									Type:        "string",
+									Description: "Text to search for, such as {{title}}",
+								},
+								"replace": {
+									Type:        "string",
+									Description: "Text to put in its place. An empty string deletes the token",
+								},
+								"match_case": {
+									Type:        "boolean",
+									Description: "Match the case of the search text (optional, defaults to false)",
+								},
+							},
+							Required: []string{"find", "replace"},
+						},
+					},
+					"page_object_ids": {
+						Type:        "array",
+						Description: "Limit the replacement to these slides (optional, whole deck when omitted)",
+						Items: &server.Property{
+							Type: "string",
+						},
+					},
+					"account": {
+						Type:        "string",
+						Description: "Email address of the account to use (optional)",
+					},
+				},
+				Required: []string{"presentation_id", "replacements"},
+			},
+		},
+		{
+			Name:        "slides_slide_reorder",
+			Description: "Move slides to a new position in the deck",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"presentation_id": {
+						Type:        "string",
+						Description: "Presentation ID",
+					},
+					"slide_object_ids": {
+						Type:        "array",
+						Description: "Object IDs of the slides to move. They keep this order at the destination",
+						Items: &server.Property{
+							Type: "string",
+						},
+					},
+					"insertion_index": {
+						Type:        "number",
+						Description: "Zero-based position to move the slides to",
+					},
+					"account": {
+						Type:        "string",
+						Description: "Email address of the account to use (optional)",
+					},
+				},
+				Required: []string{"presentation_id", "slide_object_ids", "insertion_index"},
+			},
+		},
 	}
 }
 
@@ -802,6 +962,158 @@ func (s *Service) HandleToolCall(ctx context.Context, name string, arguments jso
 			"share_url":       shareUrl,
 			"role":            role,
 			"note":            "Use Drive API for actual permission management",
+		}, nil
+
+	case "slides_layouts_list":
+		var typed struct {
+			PresentationID string `json:"presentation_id"`
+		}
+		if err := json.Unmarshal(arguments, &typed); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		presentation, err := client.GetPresentation(typed.PresentationID)
+		if err != nil {
+			return nil, err
+		}
+		return formatLayouts(presentation), nil
+
+	case "slides_slide_create_from_layout":
+		var typed struct {
+			PresentationID string `json:"presentation_id"`
+			LayoutID       string `json:"layout_id"`
+			LayoutName     string `json:"layout_name"`
+			Placeholders   []struct {
+				Type         string `json:"type"`
+				Index        *int64 `json:"index"`
+				Text         string `json:"text"`
+				Bullets      bool   `json:"bullets"`
+				BulletPreset string `json:"bullet_preset"`
+			} `json:"placeholders"`
+			InsertionIndex *int64 `json:"insertion_index"`
+			SlideObjectID  string `json:"slide_object_id"`
+		}
+		if err := json.Unmarshal(arguments, &typed); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		requested := make([]placeholderRequest, 0, len(typed.Placeholders))
+		for _, ph := range typed.Placeholders {
+			var index int64
+			if ph.Index != nil {
+				index = *ph.Index
+			}
+			requested = append(requested, placeholderRequest{
+				kind:         ph.Type,
+				index:        index,
+				text:         ph.Text,
+				bullets:      ph.Bullets,
+				bulletPreset: ph.BulletPreset,
+			})
+		}
+
+		result, err := client.CreateSlideFromLayout(typed.PresentationID, slideFromLayoutInput{
+			layoutId:       typed.LayoutID,
+			layoutName:     typed.LayoutName,
+			slideObjectId:  typed.SlideObjectID,
+			insertionIndex: typed.InsertionIndex,
+			placeholders:   requested,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		response := map[string]interface{}{
+			"presentation_id": typed.PresentationID,
+			"slide_id":        result.slideId,
+			"layout_id":       result.layoutId,
+			"layout_name":     result.layoutName,
+			"placeholders":    formatPlaceholderFills(result.fills),
+			"request_count":   result.requestCount,
+		}
+		if result.insertionIndex != nil {
+			response["insertion_index"] = *result.insertionIndex
+		} else {
+			response["insertion_index"] = nil
+		}
+		return response, nil
+
+	case "slides_replace_all_text":
+		var typed struct {
+			PresentationID string `json:"presentation_id"`
+			Replacements   []struct {
+				Find string `json:"find"`
+				// A pointer so an omitted field can be told from an explicit
+				// empty string, which means delete the token
+				Replace   *string `json:"replace"`
+				MatchCase bool    `json:"match_case"`
+			} `json:"replacements"`
+			PageObjectIDs []string `json:"page_object_ids"`
+		}
+		if err := json.Unmarshal(arguments, &typed); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		replacements := make([]textReplacement, 0, len(typed.Replacements))
+		for i, r := range typed.Replacements {
+			replacement, err := requireReplacement(i, r.Find, r.Replace)
+			if err != nil {
+				return nil, fmt.Errorf("invalid arguments: %w", err)
+			}
+			replacement.matchCase = r.MatchCase
+			replacements = append(replacements, replacement)
+		}
+
+		result, err := client.ReplaceAllText(typed.PresentationID, replacements, typed.PageObjectIDs)
+		if err != nil {
+			return nil, err
+		}
+
+		applied := make([]map[string]interface{}, 0, len(replacements))
+		for i, r := range replacements {
+			applied = append(applied, map[string]interface{}{
+				"find":        r.find,
+				"replace":     r.replace,
+				"occurrences": result.perReplacement[i],
+			})
+		}
+
+		response := map[string]interface{}{
+			"presentation_id":    typed.PresentationID,
+			"total_replacements": result.total,
+			"replacements":       applied,
+		}
+		if result.total == 0 {
+			response["note"] = "no occurrences were replaced; check the tokens exist in the deck"
+		}
+		return response, nil
+
+	case "slides_slide_reorder":
+		var typed struct {
+			PresentationID string   `json:"presentation_id"`
+			SlideObjectIDs []string `json:"slide_object_ids"`
+			// A pointer so an omitted field can be told from position 0, which
+			// is a real move to the front of the deck
+			InsertionIndex *int64 `json:"insertion_index"`
+		}
+		if err := json.Unmarshal(arguments, &typed); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		insertionIndex, err := requireInsertionIndex(typed.InsertionIndex)
+		if err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+
+		if _, err := client.UpdateSlidesPosition(typed.PresentationID, typed.SlideObjectIDs, insertionIndex); err != nil {
+			return nil, err
+		}
+
+		return map[string]interface{}{
+			"presentation_id":  typed.PresentationID,
+			"slide_object_ids": typed.SlideObjectIDs,
+			"insertion_index":  insertionIndex,
+			"moved":            true,
 		}, nil
 
 	default:
