@@ -23,17 +23,25 @@ type fakeLayout struct {
 	objectId     string
 	name         string
 	placeholders []fakePlaceholder
+	displayName  string
 }
 
 type fakePlaceholder struct {
 	objectId string
 	kind     string
+	index    int64
 }
 
 var fakeLayouts = []fakeLayout{
-	{objectId: "layout-title-body", name: "TITLE_AND_BODY", placeholders: []fakePlaceholder{
+	{objectId: "layout-title-body", name: "TITLE_AND_BODY", displayName: "Title and body", placeholders: []fakePlaceholder{
 		{objectId: "layout-title-body-title", kind: "TITLE"},
 		{objectId: "layout-title-body-body", kind: "BODY"},
+	}},
+	// Two placeholders of the same type, which only an index can tell apart
+	{objectId: "layout-two-columns", name: "TWO_COLUMNS", displayName: "Two columns", placeholders: []fakePlaceholder{
+		{objectId: "layout-two-columns-title", kind: "TITLE"},
+		{objectId: "layout-two-columns-left", kind: "BODY", index: 0},
+		{objectId: "layout-two-columns-right", kind: "BODY", index: 1},
 	}},
 	{objectId: "layout-title", name: "TITLE", placeholders: []fakePlaceholder{
 		// Themes differ here; CENTERED_TITLE + SUBTITLE is the common shape.
@@ -52,13 +60,20 @@ func layoutPages() []*slides.Page {
 		for _, ph := range layout.placeholders {
 			elements = append(elements, &slides.PageElement{
 				ObjectId: ph.objectId,
-				Shape:    &slides.Shape{Placeholder: &slides.Placeholder{Type: ph.kind}},
+				Shape: &slides.Shape{Placeholder: &slides.Placeholder{
+					Type:            ph.kind,
+					Index:           ph.index,
+					ForceSendFields: []string{"Index"},
+				}},
 			})
 		}
 		pages = append(pages, &slides.Page{
-			ObjectId:         layout.objectId,
-			LayoutProperties: &slides.LayoutProperties{Name: layout.name},
-			PageElements:     elements,
+			ObjectId: layout.objectId,
+			LayoutProperties: &slides.LayoutProperties{
+				Name:        layout.name,
+				DisplayName: layout.displayName,
+			},
+			PageElements: elements,
 		})
 	}
 	return pages
@@ -214,6 +229,25 @@ func (f *fakeSlidesAPI) handleBatchUpdate(req *http.Request) (*http.Response, er
 			f.styled = append(f.styled, styling)
 			replies = append(replies, &slides.Response{})
 
+		case r.ReplaceAllText != nil:
+			f.requests = append(f.requests, "replaceAllText")
+			changed := f.replaceText(r.ReplaceAllText)
+			replies = append(replies, &slides.Response{ReplaceAllText: &slides.ReplaceAllTextResponse{
+				OccurrencesChanged: changed,
+				ForceSendFields:    []string{"OccurrencesChanged"},
+			}})
+
+		case r.CreateParagraphBullets != nil:
+			f.requests = append(f.requests, "createParagraphBullets")
+			replies = append(replies, &slides.Response{})
+
+		case r.UpdateSlidesPosition != nil:
+			f.requests = append(f.requests, "updateSlidesPosition")
+			if err := f.moveSlides(r.UpdateSlidesPosition); err != nil {
+				return fail(http.StatusBadRequest, err.Error())
+			}
+			replies = append(replies, &slides.Response{})
+
 		default:
 			f.requests = append(f.requests, "other")
 			replies = append(replies, &slides.Response{})
@@ -238,6 +272,94 @@ func (f *fakeSlidesAPI) recordText(req *slides.InsertTextRequest) {
 		key = fmt.Sprintf("%s[%d,%d]", req.ObjectId, req.CellLocation.RowIndex, req.CellLocation.ColumnIndex)
 	}
 	f.text[key] = req.Text
+}
+
+// replaceText applies a replaceAllText across the recorded shape text and
+// reports how many occurrences changed, the way the real API does.
+func (f *fakeSlidesAPI) replaceText(req *slides.ReplaceAllTextRequest) int64 {
+	if req.ContainsText == nil || req.ContainsText.Text == "" {
+		return 0
+	}
+	find := req.ContainsText.Text
+	var changed int64
+	for key, value := range f.text {
+		if req.ContainsText.MatchCase {
+			n := strings.Count(value, find)
+			if n == 0 {
+				continue
+			}
+			changed += int64(n)
+			f.text[key] = strings.ReplaceAll(value, find, req.ReplaceText)
+			continue
+		}
+		n := strings.Count(strings.ToLower(value), strings.ToLower(find))
+		if n == 0 {
+			continue
+		}
+		changed += int64(n)
+		f.text[key] = caseInsensitiveReplace(value, find, req.ReplaceText)
+	}
+	return changed
+}
+
+func caseInsensitiveReplace(value, find, replace string) string {
+	var out strings.Builder
+	lowerValue, lowerFind := strings.ToLower(value), strings.ToLower(find)
+	for {
+		at := strings.Index(lowerValue, lowerFind)
+		if at < 0 {
+			out.WriteString(value)
+			return out.String()
+		}
+		out.WriteString(value[:at])
+		out.WriteString(replace)
+		value = value[at+len(find):]
+		lowerValue = lowerValue[at+len(find):]
+	}
+}
+
+// moveSlides reorders the deck the way updateSlidesPosition does: the listed
+// slides keep their given order and land at the insertion index.
+func (f *fakeSlidesAPI) moveSlides(req *slides.UpdateSlidesPositionRequest) error {
+	moving := make([]*slides.Page, 0, len(req.SlideObjectIds))
+	for _, id := range req.SlideObjectIds {
+		found := false
+		for _, page := range f.slides {
+			if page.ObjectId == id {
+				moving = append(moving, page)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown slide %q", id)
+		}
+	}
+
+	remaining := make([]*slides.Page, 0, len(f.slides))
+	for _, page := range f.slides {
+		keep := true
+		for _, id := range req.SlideObjectIds {
+			if page.ObjectId == id {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			remaining = append(remaining, page)
+		}
+	}
+
+	at := int(req.InsertionIndex)
+	if at > len(remaining) {
+		at = len(remaining)
+	}
+	reordered := make([]*slides.Page, 0, len(f.slides))
+	reordered = append(reordered, remaining[:at]...)
+	reordered = append(reordered, moving...)
+	reordered = append(reordered, remaining[at:]...)
+	f.slides = reordered
+	return nil
 }
 
 // addSlideFromRequest honours the caller-supplied object ID and placeholder
@@ -367,7 +489,9 @@ func jsonResponse(status int, payload any) (*http.Response, error) {
 
 // newFakeConverter wires a MarkdownConverter to a fake API pre-loaded with the
 // given number of existing slides.
-func newFakeConverter(t *testing.T, existingSlides int) (*MarkdownConverter, *fakeSlidesAPI) {
+// newFakeClient builds a Client wired to the fake API, with the deck seeded to
+// the requested number of slides.
+func newFakeClient(t *testing.T, existingSlides int) (*Client, *fakeSlidesAPI) {
 	t.Helper()
 
 	fake := &fakeSlidesAPI{}
@@ -383,6 +507,13 @@ func newFakeConverter(t *testing.T, existingSlides int) (*MarkdownConverter, *fa
 		t.Fatalf("Failed to create client: %v", err)
 	}
 
+	return client, fake
+}
+
+func newFakeConverter(t *testing.T, existingSlides int) (*MarkdownConverter, *fakeSlidesAPI) {
+	t.Helper()
+
+	client, fake := newFakeClient(t, existingSlides)
 	return NewMarkdownConverter(client, "test-presentation"), fake
 }
 

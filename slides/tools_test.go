@@ -32,6 +32,10 @@ func TestServiceGetTools(t *testing.T) {
 		"slides_set_layout",
 		"slides_export_pdf",
 		"slides_share",
+		"slides_layouts_list",
+		"slides_slide_create_from_layout",
+		"slides_replace_all_text",
+		"slides_slide_reorder",
 		// "slides_presentations_list_all_accounts" is in MultiAccountService, not Service
 	}
 
