@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 
 	"go.ngs.io/google-mcp-server/server"
 	"google.golang.org/api/drive/v3"
@@ -666,7 +667,7 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		includeResolved := args.IncludeResolved == nil || *args.IncludeResolved
-		return h.handleCommentsList(ctx, args.FileID, includeResolved, int64(args.PageSize), args.PageToken)
+		return h.handleCommentsList(ctx, args.FileID, includeResolved, args.PageSize, args.PageToken)
 
 	case "drive_comment_create":
 		var args struct {
@@ -905,15 +906,19 @@ func (h *Handler) handlePermissionsDelete(ctx context.Context, fileID, permissio
 // maxCommentsPageSize is the largest page size the comments endpoint accepts
 const maxCommentsPageSize = 100
 
-func (h *Handler) handleCommentsList(ctx context.Context, fileID string, includeResolved bool, pageSize int64, pageToken string) (interface{}, error) {
+func (h *Handler) handleCommentsList(ctx context.Context, fileID string, includeResolved bool, pageSize float64, pageToken string) (interface{}, error) {
 	if fileID == "" {
 		return nil, fmt.Errorf("file_id is required")
+	}
+	// Validate before converting so fractional or huge values cannot slip past the cap
+	if pageSize != 0 && (pageSize < 1 || pageSize != math.Trunc(pageSize)) {
+		return nil, fmt.Errorf("page_size must be a whole number between 1 and %d", maxCommentsPageSize)
 	}
 	if pageSize > maxCommentsPageSize {
 		pageSize = maxCommentsPageSize
 	}
 
-	comments, nextPageToken, err := h.client.ListComments(ctx, fileID, includeResolved, pageSize, pageToken)
+	comments, nextPageToken, err := h.client.ListComments(ctx, fileID, includeResolved, int64(pageSize), pageToken)
 	if err != nil {
 		return nil, err
 	}

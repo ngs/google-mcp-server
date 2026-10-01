@@ -379,3 +379,35 @@ func TestCommentToolsAcceptAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestCommentsList_InvalidPageSize(t *testing.T) {
+	h, rt := newCommentsTestHandler(t, `{"comments": []}`)
+
+	for _, pageSize := range []interface{}{-1, 0.5, 20.5} {
+		if _, err := callTool(t, h, "drive_comments_list", map[string]interface{}{
+			"file_id":   "file123",
+			"page_size": pageSize,
+		}); err == nil {
+			t.Errorf("Expected an error for page_size %v", pageSize)
+		}
+	}
+	if len(rt.requests) != 0 {
+		t.Error("Expected no API request for an invalid page_size")
+	}
+}
+
+func TestCommentsList_HugePageSizeCapped(t *testing.T) {
+	h, rt := newCommentsTestHandler(t, `{"comments": []}`)
+
+	if _, err := callTool(t, h, "drive_comments_list", map[string]interface{}{
+		"file_id":   "file123",
+		"page_size": 1e30,
+	}); err != nil {
+		t.Fatalf("drive_comments_list error = %v", err)
+	}
+
+	req, _ := rt.lastRequest(t)
+	if got := req.URL.Query().Get("pageSize"); got != "100" {
+		t.Errorf("Expected pageSize capped at 100, got %q", got)
+	}
+}
