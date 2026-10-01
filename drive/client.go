@@ -21,6 +21,7 @@ import (
 	goldmarkhtml "github.com/yuin/goldmark/renderer/html"
 	"go.ngs.io/google-mcp-server/auth"
 	"google.golang.org/api/drive/v3"
+	"google.golang.org/api/googleapi"
 )
 
 // Client wraps the Google Drive API client
@@ -635,4 +636,89 @@ func (c *Client) ReplaceDocWithMarkdown(ctx context.Context, fileID, markdown st
 	}
 
 	return updatedFile, nil
+}
+
+// commentFields lists the comment fields requested from the API. The comments
+// and replies endpoints reject calls that do not set the fields parameter.
+const commentFields = "id, author(displayName, me), content, htmlContent, createdTime, modifiedTime, " +
+	"resolved, deleted, anchor, quotedFileContent, " +
+	"replies(id, author(displayName, me), content, htmlContent, createdTime, modifiedTime, action, deleted)"
+
+// replyFields lists the reply fields requested from the API
+const replyFields = "id, author(displayName, me), content, htmlContent, createdTime, modifiedTime, action, deleted"
+
+// ListComments lists comments on a file. Resolved comments are dropped when
+// includeResolved is false; the API has no server-side filter for them, so a
+// page may hold fewer comments than pageSize.
+func (c *Client) ListComments(ctx context.Context, fileID string, includeResolved bool, pageSize int64, pageToken string) ([]*drive.Comment, string, error) {
+	call := c.service.Comments.List(fileID).
+		Fields(googleapi.Field("nextPageToken, comments(" + commentFields + ")")).
+		Context(ctx)
+	if pageSize > 0 {
+		call = call.PageSize(pageSize)
+	}
+	if pageToken != "" {
+		call = call.PageToken(pageToken)
+	}
+
+	list, err := call.Do()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to list comments: %w", err)
+	}
+
+	comments := list.Comments
+	if !includeResolved {
+		comments = make([]*drive.Comment, 0, len(list.Comments))
+		for _, comment := range list.Comments {
+			if !comment.Resolved {
+				comments = append(comments, comment)
+			}
+		}
+	}
+
+	return comments, list.NextPageToken, nil
+}
+
+// CreateComment creates a comment on a file. quotedText and anchor are
+// optional and passed through to the API as-is.
+func (c *Client) CreateComment(ctx context.Context, fileID, content, quotedText, anchor string) (*drive.Comment, error) {
+	comment := &drive.Comment{
+		Content: content,
+		Anchor:  anchor,
+	}
+	if quotedText != "" {
+		comment.QuotedFileContent = &drive.CommentQuotedFileContent{
+			MimeType: "text/plain",
+			Value:    quotedText,
+		}
+	}
+
+	created, err := c.service.Comments.Create(fileID, comment).
+		Fields(googleapi.Field(commentFields)).
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create comment: %w", err)
+	}
+
+	return created, nil
+}
+
+// CreateReply replies to a comment. action may be "resolve" or "reopen" to
+// change the comment's state; content may be empty only when action is set.
+func (c *Client) CreateReply(ctx context.Context, fileID, commentID, content, action string) (*drive.Reply, error) {
+	reply := &drive.Reply{
+		Content: content,
+		Action:  action,
+	}
+
+	created, err := c.service.Replies.Create(fileID, commentID, reply).
+		Fields(googleapi.Field(replyFields)).
+		Context(ctx).
+		Do()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create reply: %w", err)
+	}
+
+	return created, nil
 }
