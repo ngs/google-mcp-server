@@ -39,7 +39,7 @@ go build -o google-mcp-server .
 
 ### Fully Implemented with Multi-Account Support
 - **Calendar Service** (`calendar/`): All 8 tools + multi-account support via `calendar/multi_account.go`
-- **Drive Service** (`drive/`): All 19 tools including Markdown support + multi-account support via `drive/multi_account.go`
+- **Drive Service** (`drive/`): All 23 tools including Markdown and comment support + multi-account support via `drive/multi_account.go`
 - **Gmail Service** (`gmail/`): 3 core tools + multi-account support via `gmail/multi_account.go`
 - **Account Management** (`accounts/`): 5 tools for managing multiple Google accounts
 
