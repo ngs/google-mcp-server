@@ -1,4 +1,4 @@
 package server
 
 // VERSION is the current version of the google-mcp-server
-const VERSION = "0.7.1"
+const VERSION = "0.8.0"
