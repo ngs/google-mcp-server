@@ -68,6 +68,8 @@ release:
     name: google-mcp-server
   draft: false
   prerelease: auto
+  # Lets a failed release job be re-run after its assets were already uploaded
+  replace_existing_artifacts: true
   name_template: "{{.ProjectName}}-v{{.Version}}"
   header: |
     ## Google MCP Server Release
