@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 
 	"go.ngs.io/google-mcp-server/server"
+	"google.golang.org/api/drive/v3"
 )
 
 // Handler implements the ServiceHandler interface for Drive
@@ -362,6 +364,110 @@ func defaultDriveTools() []server.Tool {
 				Required: []string{"file_id", "permission_id"},
 			},
 		},
+		{
+			Name:        "drive_comments_list",
+			Description: "List comments and their replies on a file (works for Google Docs, Sheets, Slides and other Drive files)",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"file_id": {
+						Type:        "string",
+						Description: "File ID",
+					},
+					"include_resolved": {
+						Type:        "boolean",
+						Description: "Include resolved comments (default: true)",
+					},
+					"page_size": {
+						Type:        "number",
+						Description: "Maximum number of comments per page (1-100, default 20)",
+					},
+					"page_token": {
+						Type:        "string",
+						Description: "Token from a previous call's next_page_token to fetch the next page",
+					},
+				},
+				Required: []string{"file_id"},
+			},
+		},
+		{
+			Name: "drive_comment_create",
+			Description: "Add a comment to a file. For Google Docs, Sheets and Slides the comment is shown as a " +
+				"file-level comment: the API cannot attach it to a text range, so quoted_text is only shown as " +
+				"the quoted context of the comment",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"file_id": {
+						Type:        "string",
+						Description: "File ID",
+					},
+					"content": {
+						Type:        "string",
+						Description: "Plain text content of the comment",
+					},
+					"quoted_text": {
+						Type:        "string",
+						Description: "Text from the file the comment refers to (optional, shown as quoted context)",
+					},
+					"anchor": {
+						Type: "string",
+						Description: "Anchor JSON string for the region of the file (optional). " +
+							"Google Workspace editors ignore anchors set through the API",
+					},
+				},
+				Required: []string{"file_id", "content"},
+			},
+		},
+		{
+			Name:        "drive_comment_reply_create",
+			Description: "Reply to a comment on a file, optionally resolving or reopening it",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"file_id": {
+						Type:        "string",
+						Description: "File ID",
+					},
+					"comment_id": {
+						Type:        "string",
+						Description: "Comment ID",
+					},
+					"content": {
+						Type:        "string",
+						Description: "Plain text content of the reply (required unless action is set)",
+					},
+					"action": {
+						Type:        "string",
+						Description: "Action to apply to the comment with the reply (optional)",
+						Enum:        []string{"resolve", "reopen"},
+					},
+				},
+				Required: []string{"file_id", "comment_id"},
+			},
+		},
+		{
+			Name:        "drive_comment_resolve",
+			Description: "Resolve a comment on a file, optionally with a closing reply",
+			InputSchema: server.InputSchema{
+				Type: "object",
+				Properties: map[string]server.Property{
+					"file_id": {
+						Type:        "string",
+						Description: "File ID",
+					},
+					"comment_id": {
+						Type:        "string",
+						Description: "Comment ID",
+					},
+					"content": {
+						Type:        "string",
+						Description: "Plain text content of a closing reply (optional)",
+					},
+				},
+				Required: []string{"file_id", "comment_id"},
+			},
+		},
 	}
 }
 
@@ -549,6 +655,54 @@ func (h *Handler) HandleToolCall(ctx context.Context, name string, arguments jso
 			return nil, fmt.Errorf("invalid arguments: %w", err)
 		}
 		return h.handlePermissionsDelete(ctx, args.FileID, args.PermissionID)
+
+	case "drive_comments_list":
+		var args struct {
+			FileID          string  `json:"file_id"`
+			IncludeResolved *bool   `json:"include_resolved"`
+			PageSize        float64 `json:"page_size"`
+			PageToken       string  `json:"page_token"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		includeResolved := args.IncludeResolved == nil || *args.IncludeResolved
+		return h.handleCommentsList(ctx, args.FileID, includeResolved, args.PageSize, args.PageToken)
+
+	case "drive_comment_create":
+		var args struct {
+			FileID     string `json:"file_id"`
+			Content    string `json:"content"`
+			QuotedText string `json:"quoted_text"`
+			Anchor     string `json:"anchor"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		return h.handleCommentCreate(ctx, args.FileID, args.Content, args.QuotedText, args.Anchor)
+
+	case "drive_comment_reply_create":
+		var args struct {
+			FileID    string `json:"file_id"`
+			CommentID string `json:"comment_id"`
+			Content   string `json:"content"`
+			Action    string `json:"action"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		return h.handleCommentReplyCreate(ctx, args.FileID, args.CommentID, args.Content, args.Action)
+
+	case "drive_comment_resolve":
+		var args struct {
+			FileID    string `json:"file_id"`
+			CommentID string `json:"comment_id"`
+			Content   string `json:"content"`
+		}
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return nil, fmt.Errorf("invalid arguments: %w", err)
+		}
+		return h.handleCommentReplyCreate(ctx, args.FileID, args.CommentID, args.Content, "resolve")
 
 	default:
 		return nil, fmt.Errorf("unknown tool: %s", name)
@@ -747,6 +901,150 @@ func (h *Handler) handlePermissionsDelete(ctx context.Context, fileID, permissio
 	}
 
 	return map[string]string{"status": "deleted", "permission_id": permissionID}, nil
+}
+
+// maxCommentsPageSize is the largest page size the comments endpoint accepts
+const maxCommentsPageSize = 100
+
+func (h *Handler) handleCommentsList(ctx context.Context, fileID string, includeResolved bool, pageSize float64, pageToken string) (interface{}, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("file_id is required")
+	}
+	// Validate before converting so fractional or huge values cannot slip past the cap
+	if pageSize != 0 && (pageSize < 1 || pageSize != math.Trunc(pageSize)) {
+		return nil, fmt.Errorf("page_size must be a whole number between 1 and %d", maxCommentsPageSize)
+	}
+	if pageSize > maxCommentsPageSize {
+		pageSize = maxCommentsPageSize
+	}
+
+	comments, nextPageToken, err := h.client.ListComments(ctx, fileID, includeResolved, int64(pageSize), pageToken)
+	if err != nil {
+		return nil, err
+	}
+
+	result := map[string]interface{}{
+		"file_id":  fileID,
+		"comments": formatComments(comments),
+		"count":    len(comments),
+	}
+	if nextPageToken != "" {
+		result["next_page_token"] = nextPageToken
+	}
+
+	return result, nil
+}
+
+func (h *Handler) handleCommentCreate(ctx context.Context, fileID, content, quotedText, anchor string) (interface{}, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("file_id is required")
+	}
+	if content == "" {
+		return nil, fmt.Errorf("content is required")
+	}
+
+	comment, err := h.client.CreateComment(ctx, fileID, content, quotedText, anchor)
+	if err != nil {
+		return nil, err
+	}
+
+	return formatComment(comment), nil
+}
+
+func (h *Handler) handleCommentReplyCreate(ctx context.Context, fileID, commentID, content, action string) (interface{}, error) {
+	if fileID == "" {
+		return nil, fmt.Errorf("file_id is required")
+	}
+	if commentID == "" {
+		return nil, fmt.Errorf("comment_id is required")
+	}
+	switch action {
+	case "", "resolve", "reopen":
+	default:
+		return nil, fmt.Errorf("invalid action %q: must be \"resolve\" or \"reopen\"", action)
+	}
+	if content == "" && action == "" {
+		return nil, fmt.Errorf("content is required unless action is set")
+	}
+
+	reply, err := h.client.CreateReply(ctx, fileID, commentID, content, action)
+	if err != nil {
+		return nil, err
+	}
+
+	result := formatReply(reply)
+	result["comment_id"] = commentID
+	return result, nil
+}
+
+// formatComment formats a Drive comment, including its replies, for response
+func formatComment(comment *drive.Comment) map[string]interface{} {
+	result := map[string]interface{}{
+		"id":           comment.Id,
+		"content":      comment.Content,
+		"createdTime":  comment.CreatedTime,
+		"modifiedTime": comment.ModifiedTime,
+		"resolved":     comment.Resolved,
+	}
+	if comment.Author != nil {
+		result["author"] = formatCommentAuthor(comment.Author)
+	}
+	if comment.Deleted {
+		result["deleted"] = true
+	}
+	if comment.Anchor != "" {
+		result["anchor"] = comment.Anchor
+	}
+	if comment.QuotedFileContent != nil && comment.QuotedFileContent.Value != "" {
+		result["quotedFileContent"] = comment.QuotedFileContent.Value
+	}
+
+	replies := make([]map[string]interface{}, len(comment.Replies))
+	for i, reply := range comment.Replies {
+		replies[i] = formatReply(reply)
+	}
+	result["replies"] = replies
+
+	return result
+}
+
+// formatComments formats multiple Drive comments for response
+func formatComments(comments []*drive.Comment) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(comments))
+	for i, comment := range comments {
+		result[i] = formatComment(comment)
+	}
+	return result
+}
+
+// formatReply formats a reply to a Drive comment for response
+func formatReply(reply *drive.Reply) map[string]interface{} {
+	result := map[string]interface{}{
+		"id":           reply.Id,
+		"content":      reply.Content,
+		"createdTime":  reply.CreatedTime,
+		"modifiedTime": reply.ModifiedTime,
+	}
+	if reply.Author != nil {
+		result["author"] = formatCommentAuthor(reply.Author)
+	}
+	if reply.Action != "" {
+		result["action"] = reply.Action
+	}
+	if reply.Deleted {
+		result["deleted"] = true
+	}
+	return result
+}
+
+// formatCommentAuthor formats a comment author. The API does not return email
+// addresses for comment authors, only the display name and whether it is the
+// authenticated user.
+func formatCommentAuthor(user *drive.User) map[string]interface{} {
+	return map[string]interface{}{
+		"displayName": user.DisplayName,
+		"me":          user.Me,
+	}
 }
 
 // formatFile formats a drive file for response
