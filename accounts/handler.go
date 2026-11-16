@@ -136,7 +136,7 @@ func (h *Handler) handleAccountsList(ctx context.Context) (interface{}, error) {
 
 	// Sort by last used time
 	sort.Slice(accounts, func(i, j int) bool {
-		return accounts[i].LastUsed.After(accounts[j].LastUsed)
+		return accounts[i].LastUsedAt().After(accounts[j].LastUsedAt())
 	})
 
 	type AccountSummary struct {
@@ -148,11 +148,12 @@ func (h *Handler) handleAccountsList(ctx context.Context) (interface{}, error) {
 
 	summaries := make([]AccountSummary, len(accounts))
 	for i, account := range accounts {
+		token := account.CurrentToken()
 		summaries[i] = AccountSummary{
 			Email:    account.Email,
 			Name:     account.Name,
-			LastUsed: account.LastUsed,
-			Active:   account.Token != nil && account.Token.Valid(),
+			LastUsed: account.LastUsedAt(),
+			Active:   token.Valid(),
 		}
 	}
 
@@ -180,18 +181,19 @@ func (h *Handler) handleAccountsDetails(ctx context.Context, email string) (inte
 
 		details := make([]AccountDetails, len(accounts))
 		for i, account := range accounts {
+			token := account.CurrentToken()
 			detail := AccountDetails{
 				Email:    account.Email,
 				Name:     account.Name,
 				Picture:  account.Picture,
-				LastUsed: account.LastUsed,
-				Active:   account.Token != nil && account.Token.Valid(),
+				LastUsed: account.LastUsedAt(),
+				Active:   token.Valid(),
 			}
 
-			if account.Token != nil {
-				detail.TokenExpiry = account.Token.Expiry
+			if token != nil {
+				detail.TokenExpiry = token.Expiry
 				// Extract scopes from token if available
-				if scope, ok := account.Token.Extra("scope").(string); ok {
+				if scope, ok := token.Extra("scope").(string); ok {
 					detail.Scopes = strings.Split(scope, " ")
 				}
 			}
@@ -211,20 +213,21 @@ func (h *Handler) handleAccountsDetails(ctx context.Context, email string) (inte
 		return nil, err
 	}
 
+	token := account.CurrentToken()
 	result := map[string]interface{}{
 		"email":     account.Email,
 		"name":      account.Name,
 		"picture":   account.Picture,
-		"last_used": account.LastUsed,
-		"active":    account.Token != nil && account.Token.Valid(),
+		"last_used": account.LastUsedAt(),
+		"active":    token.Valid(),
 	}
 
-	if account.Token != nil {
-		result["token_expiry"] = account.Token.Expiry
-		result["token_valid"] = account.Token.Valid()
+	if token != nil {
+		result["token_expiry"] = token.Expiry
+		result["token_valid"] = token.Valid()
 
 		// Extract scopes from token if available
-		if scope, ok := account.Token.Extra("scope").(string); ok {
+		if scope, ok := token.Extra("scope").(string); ok {
 			result["scopes"] = strings.Split(scope, " ")
 		}
 	}
@@ -303,11 +306,16 @@ func (h *Handler) handleAccountsRefresh(ctx context.Context, email string) (inte
 		return nil, err
 	}
 
+	token := account.CurrentToken()
+	if token == nil {
+		return nil, fmt.Errorf("no token available for account: %s", email)
+	}
+
 	return map[string]interface{}{
 		"message":      fmt.Sprintf("Token refreshed for account %s", email),
 		"email":        account.Email,
-		"token_expiry": account.Token.Expiry,
-		"token_valid":  account.Token.Valid(),
+		"token_expiry": token.Expiry,
+		"token_valid":  token.Valid(),
 	}, nil
 }
 
