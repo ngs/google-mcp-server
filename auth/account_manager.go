@@ -194,8 +194,10 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 
 // AddAccount adds a new account or updates existing one
 func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (*Account, error) {
-	// Create temporary OAuth client to get user info
-	tempClient := am.oauthConfig.Client(ctx, token)
+	// Create temporary OAuth client to get user info. Keep its token source:
+	// if token has expired, the user-info request refreshes it there.
+	tempSource := am.oauthConfig.TokenSource(ctx, token)
+	tempClient := oauth2.NewClient(ctx, tempSource)
 
 	// Get user info
 	oauth2Service, err := oauth2api.NewService(ctx, option.WithHTTPClient(tempClient))
@@ -206,6 +208,12 @@ func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (
 	userInfo, err := oauth2Service.Userinfo.Get().Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+
+	// Start the account from the token as refreshed by the user-info request,
+	// so it is not refreshed again and the saved expiry is current.
+	if current, err := tempSource.Token(); err == nil {
+		token = current
 	}
 
 	// Create or update account

@@ -391,3 +391,59 @@ func TestInFlightRefreshUsesReplacedToken(t *testing.T) {
 		t.Fatalf("stored token = %q, want fresh-2", stored.Token.AccessToken)
 	}
 }
+
+func TestInFlightRefreshErrorRetriesReplacedSource(t *testing.T) {
+	am, _ := newTestAccountManager(t)
+
+	// The first token request (the client's automatic refresh) blocks until
+	// released and then fails; later requests (RefreshToken) succeed.
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		if n == 1 {
+			close(started)
+			<-release
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"access_token":"fresh-%d","token_type":"Bearer","expires_in":3600}`, n)
+	}))
+	t.Cleanup(tokenServer.Close)
+	am.oauthConfig.Endpoint.TokenURL = tokenServer.URL
+
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	account := newTestAccount(am, expired)
+	api := newAPIServer(t)
+	client := account.OAuthClient.GetHTTPClient()
+
+	result := make(chan string, 1)
+	go func() {
+		resp, err := client.Get(api.URL)
+		if err != nil {
+			result <- "error: " + err.Error()
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		result <- string(body)
+	}()
+
+	<-started
+	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	close(release)
+
+	if got := <-result; got != "Bearer fresh-2" {
+		t.Fatalf("in-flight request got %q, want the token installed by RefreshToken", got)
+	}
+}

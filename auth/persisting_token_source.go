@@ -42,17 +42,18 @@ func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
 		s.mu.Unlock()
 
 		tok, err := base.Token()
-		if err != nil {
-			return nil, err
-		}
 
 		s.mu.Lock()
 		// The source was replaced while this token was being fetched. Use the
-		// replacement instead, so the client does not keep sending a token
-		// that was superseded by RefreshToken.
+		// replacement instead, so the client neither fails with the old
+		// source's error nor keeps sending a token superseded by RefreshToken.
 		if gen != s.gen {
 			s.mu.Unlock()
 			continue
+		}
+		if err != nil {
+			s.mu.Unlock()
+			return nil, err
 		}
 		if tok.AccessToken != s.last {
 			// Advance last only after a successful save, so a failed write is
