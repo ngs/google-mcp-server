@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -52,14 +54,14 @@ func newTestAccount(am *AccountManager, token *oauth2.Token) *Account {
 	return account
 }
 
-func readAccountFile(t *testing.T, path string) Account {
+func readAccountFile(t *testing.T, path string) *Account {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		t.Fatalf("read account file: %v", err)
 	}
-	var stored Account
-	if err := json.Unmarshal(data, &stored); err != nil {
+	stored := &Account{}
+	if err := json.Unmarshal(data, stored); err != nil {
 		t.Fatalf("parse account file: %v", err)
 	}
 	return stored
@@ -94,8 +96,8 @@ func TestAccountHTTPClientPersistsRefreshedToken(t *testing.T) {
 	if got := atomic.LoadInt32(issued); got != 1 {
 		t.Fatalf("token endpoint called %d times, want 1", got)
 	}
-	if account.Token.AccessToken != "fresh-1" || !account.Token.Valid() {
-		t.Fatalf("in-memory token not updated: %+v", account.Token)
+	if tok := account.CurrentToken(); tok.AccessToken != "fresh-1" || !tok.Valid() {
+		t.Fatalf("in-memory token not updated: %+v", tok)
 	}
 	if account.OAuthClient.token.AccessToken != "fresh-1" {
 		t.Fatalf("OAuthClient token not updated: %q", account.OAuthClient.token.AccessToken)
@@ -143,7 +145,21 @@ func TestAccountHTTPClientSkipsWriteForUnchangedToken(t *testing.T) {
 	}
 }
 
-func TestRefreshTokenRebuildsHTTPClient(t *testing.T) {
+func getAuthorization(t *testing.T, client *http.Client, url string) string {
+	t.Helper()
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return string(body)
+}
+
+func TestRefreshTokenUpdatesExistingHTTPClient(t *testing.T) {
 	am, issued := newTestAccountManager(t)
 	expired := &oauth2.Token{
 		AccessToken:  "stale",
@@ -154,25 +170,128 @@ func TestRefreshTokenRebuildsHTTPClient(t *testing.T) {
 	account := newTestAccount(am, expired)
 	api := newAPIServer(t)
 
+	// A service built before RefreshToken keeps this client.
+	cached := account.OAuthClient.GetHTTPClient()
+
 	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
 		t.Fatalf("RefreshToken: %v", err)
 	}
 
-	resp, err := account.OAuthClient.GetHTTPClient().Get(api.URL)
-	if err != nil {
-		t.Fatalf("request: %v", err)
+	if got := getAuthorization(t, cached, api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("cached client sent %q, want the refreshed token", got)
 	}
-	body := make([]byte, 64)
-	n, _ := resp.Body.Read(body)
-	_ = resp.Body.Close()
-
-	if got := string(body[:n]); got != "Bearer fresh-1" {
-		t.Fatalf("API saw %q, want the refreshed token", got)
+	if got := getAuthorization(t, account.OAuthClient.GetHTTPClient(), api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("current client sent %q, want the refreshed token", got)
 	}
 	if got := atomic.LoadInt32(issued); got != 1 {
 		t.Fatalf("token endpoint called %d times, want 1", got)
 	}
 	if stored := readAccountFile(t, account.TokenFile); stored.Token.AccessToken != "fresh-1" {
 		t.Fatalf("stored token not updated: %q", stored.Token.AccessToken)
+	}
+}
+
+func TestRefreshAfterRemoveDoesNotRecreateAccountFile(t *testing.T) {
+	am, issued := newTestAccountManager(t)
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	account := newTestAccount(am, expired)
+	api := newAPIServer(t)
+	cached := account.OAuthClient.GetHTTPClient()
+
+	if err := am.RemoveAccount(account.Email); err != nil {
+		t.Fatalf("RemoveAccount: %v", err)
+	}
+
+	if got := getAuthorization(t, cached, api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("cached client sent %q, want a refreshed token", got)
+	}
+	if got := atomic.LoadInt32(issued); got != 1 {
+		t.Fatalf("token endpoint called %d times, want 1", got)
+	}
+	if _, err := os.Stat(account.TokenFile); !os.IsNotExist(err) {
+		t.Fatalf("removed account file was recreated (stat err: %v)", err)
+	}
+}
+
+func TestStaleClientDoesNotOverwriteReplacementAccount(t *testing.T) {
+	am, _ := newTestAccountManager(t)
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	old := newTestAccount(am, expired)
+	api := newAPIServer(t)
+	cached := old.OAuthClient.GetHTTPClient()
+
+	// The same email is added again with new credentials.
+	replacement := newTestAccount(am, &oauth2.Token{
+		AccessToken:  "replacement",
+		RefreshToken: "replacement-refresh",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(time.Hour),
+	})
+	if err := am.saveAccount(replacement); err != nil {
+		t.Fatalf("save replacement: %v", err)
+	}
+
+	if got := getAuthorization(t, cached, api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("cached client sent %q, want a refreshed token", got)
+	}
+
+	stored := readAccountFile(t, replacement.TokenFile)
+	if stored.Token.AccessToken != "replacement" || stored.Token.RefreshToken != "replacement-refresh" {
+		t.Fatalf("replacement credentials overwritten: %+v", stored.Token)
+	}
+}
+
+func TestConcurrentTokenReadsDuringRefresh(t *testing.T) {
+	am, _ := newTestAccountManager(t)
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	account := newTestAccount(am, expired)
+	api := newAPIServer(t)
+	client := account.OAuthClient.GetHTTPClient()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			resp, err := client.Get(api.URL)
+			if err != nil {
+				t.Errorf("request: %v", err)
+				return
+			}
+			_ = resp.Body.Close()
+		}()
+		go func() {
+			defer wg.Done()
+			for _, a := range am.ListAccounts() {
+				_ = a.CurrentToken().Valid()
+				_ = a.LastUsedAt()
+			}
+			if _, err := am.GetAccount(account.Email); err != nil {
+				t.Errorf("GetAccount: %v", err)
+			}
+		}()
+	}
+	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	wg.Wait()
+
+	if tok := account.CurrentToken(); tok == nil || !tok.Valid() {
+		t.Fatalf("token not valid after concurrent refreshes: %+v", tok)
 	}
 }

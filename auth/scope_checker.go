@@ -87,12 +87,13 @@ func (am *AccountManager) CheckScopes(ctx context.Context, account *Account, ser
 
 // GetTokenScopes retrieves the scopes associated with an account's token
 func (am *AccountManager) GetTokenScopes(ctx context.Context, account *Account) ([]string, error) {
-	if account.Token == nil {
+	token := account.CurrentToken()
+	if token == nil {
 		return nil, fmt.Errorf("no token available for account: %s", account.Email)
 	}
 
 	// Create a temporary client with the token
-	tokenSource := am.oauthConfig.TokenSource(ctx, account.Token)
+	tokenSource := am.oauthConfig.TokenSource(ctx, token)
 	httpClient := oauth2.NewClient(ctx, tokenSource)
 
 	// Use the tokeninfo endpoint to get scope information
@@ -101,7 +102,7 @@ func (am *AccountManager) GetTokenScopes(ctx context.Context, account *Account) 
 		return nil, fmt.Errorf("failed to create oauth2 service: %w", err)
 	}
 
-	tokenInfo, err := oauth2Service.Tokeninfo().AccessToken(account.Token.AccessToken).Do()
+	tokenInfo, err := oauth2Service.Tokeninfo().AccessToken(token.AccessToken).Do()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get token info: %w", err)
 	}
@@ -131,7 +132,7 @@ func (am *AccountManager) RefreshAccountWithScopes(ctx context.Context, email st
 	newConfig.Scopes = allScopes
 
 	// Force re-authentication with new scopes
-	account.Token = nil
+	account.setToken(nil)
 	if err := am.saveAccount(account); err != nil {
 		return fmt.Errorf("failed to clear token for re-authentication: %w", err)
 	}

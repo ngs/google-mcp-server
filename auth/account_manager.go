@@ -22,19 +22,51 @@ type AccountManager struct {
 	configDir   string
 	oauthConfig *oauth2.Config
 	mu          sync.RWMutex
-	// saveMu serializes writes of account files and token swaps.
+	// saveMu serializes writes of account files, token swaps, and changes
+	// to which accounts are registered. Acquire it before mu.
 	saveMu sync.Mutex
 }
 
 // Account represents a single authenticated Google account
 type Account struct {
-	Email       string        `json:"email"`
-	Name        string        `json:"name"`
-	Picture     string        `json:"picture"`
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture"`
+	// Token and LastUsed are updated concurrently by token refreshes and
+	// account lookups. Read them through CurrentToken and LastUsedAt.
 	Token       *oauth2.Token `json:"token"`
 	LastUsed    time.Time     `json:"last_used"`
 	TokenFile   string        `json:"token_file"`
 	OAuthClient *OAuthClient  `json:"-"`
+
+	mu          sync.RWMutex           // guards Token and LastUsed
+	tokenSource *persistingTokenSource // backs OAuthClient's HTTP client
+}
+
+// CurrentToken returns the account's current token.
+func (a *Account) CurrentToken() *oauth2.Token {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.Token
+}
+
+// LastUsedAt returns when the account was last used.
+func (a *Account) LastUsedAt() time.Time {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.LastUsed
+}
+
+func (a *Account) setToken(token *oauth2.Token) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Token = token
+}
+
+func (a *Account) touch() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.LastUsed = time.Now()
 }
 
 // NewAccountManager creates a new account manager
@@ -90,14 +122,15 @@ func NewAccountManager(ctx context.Context, oauthConfig OAuthConfig) (*AccountMa
 
 // loadAccounts loads all existing account tokens
 func (am *AccountManager) loadAccounts(ctx context.Context) error {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-
 	files, err := os.ReadDir(am.configDir)
 	if err != nil {
 		return fmt.Errorf("failed to read config directory: %w", err)
 	}
 
+	// Accounts are prepared without holding the locks: updateUserInfo makes
+	// network calls, and a token refresh during it takes saveMu and mu.
+	var loaded []*Account
+	var needSave []*Account
 	for _, file := range files {
 		if !strings.HasSuffix(file.Name(), ".json") {
 			continue
@@ -112,8 +145,8 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 			continue
 		}
 
-		var account Account
-		if err := json.Unmarshal(data, &account); err != nil {
+		account := &Account{}
+		if err := json.Unmarshal(data, account); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse token file %s: %v\n", tokenFile, err)
 			continue
 		}
@@ -126,17 +159,33 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 			token:     account.Token,
 			tokenFile: tokenFile,
 		}
-		account.OAuthClient.httpClient = am.newAccountHTTPClient(ctx, &account)
+		account.OAuthClient.httpClient = am.newAccountHTTPClient(ctx, account)
 
 		// Get user info if not available
 		if account.Email == "" {
-			if err := am.updateUserInfo(ctx, &account); err != nil {
+			if err := am.updateUserInfo(ctx, account); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to get user info: %v\n", err)
+			} else if account.Email != "" {
+				needSave = append(needSave, account)
 			}
 		}
 
 		if account.Email != "" {
-			am.accounts[account.Email] = &account
+			loaded = append(loaded, account)
+		}
+	}
+
+	am.saveMu.Lock()
+	am.mu.Lock()
+	for _, account := range loaded {
+		am.accounts[account.Email] = account
+	}
+	am.mu.Unlock()
+	am.saveMu.Unlock()
+
+	for _, account := range needSave {
+		if err := am.saveAccount(account); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save account %s: %v\n", account.Email, err)
 		}
 	}
 
@@ -145,9 +194,6 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 
 // AddAccount adds a new account or updates existing one
 func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (*Account, error) {
-	am.mu.Lock()
-	defer am.mu.Unlock()
-
 	// Create temporary OAuth client to get user info
 	tempClient := am.oauthConfig.Client(ctx, token)
 
@@ -184,8 +230,14 @@ func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (
 	}
 	account.OAuthClient.httpClient = am.newAccountHTTPClient(ctx, account)
 
-	// Save account
-	if err := am.saveAccount(account); err != nil {
+	// Save and register the account together, so that a refresh by a client
+	// of an account it replaces cannot overwrite the new file in between.
+	am.saveMu.Lock()
+	defer am.saveMu.Unlock()
+	am.mu.Lock()
+	defer am.mu.Unlock()
+
+	if err := am.saveAccountLocked(account); err != nil {
 		return nil, fmt.Errorf("failed to save account: %w", err)
 	}
 
@@ -193,16 +245,30 @@ func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (
 	return account, nil
 }
 
-// saveAccount saves an account to disk
+// isRegistered reports whether account is the instance currently registered
+// for its email.
+func (am *AccountManager) isRegistered(account *Account) bool {
+	am.mu.RLock()
+	defer am.mu.RUnlock()
+	return am.accounts[account.Email] == account
+}
+
+// saveAccount saves an account to disk unless it has been removed or replaced
+// since it was looked up.
 func (am *AccountManager) saveAccount(account *Account) error {
 	am.saveMu.Lock()
 	defer am.saveMu.Unlock()
+	if !am.isRegistered(account) {
+		return nil
+	}
 	return am.saveAccountLocked(account)
 }
 
 // saveAccountLocked writes an account file; the caller must hold saveMu.
 func (am *AccountManager) saveAccountLocked(account *Account) error {
+	account.mu.RLock()
 	data, err := json.MarshalIndent(account, "", "  ")
+	account.mu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("failed to marshal account: %w", err)
 	}
@@ -248,7 +314,7 @@ func (am *AccountManager) GetAccount(email string) (*Account, error) {
 	}
 
 	// Update last used time
-	account.LastUsed = time.Now()
+	account.touch()
 	go func() {
 		if err := am.saveAccount(account); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to update last used time for %s: %v\n", email, err)
@@ -280,7 +346,7 @@ func (am *AccountManager) GetAccountForContext(ctx context.Context, hint string)
 	if strings.Contains(hint, "@") {
 		for email, account := range am.accounts {
 			if strings.Contains(hint, email) {
-				account.LastUsed = time.Now()
+				account.touch()
 				go func() {
 					if err := am.saveAccount(account); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to update last used time for %s: %v\n", email, err)
@@ -296,7 +362,7 @@ func (am *AccountManager) GetAccountForContext(ctx context.Context, hint string)
 		for email, account := range am.accounts {
 			domain := strings.Split(email, "@")[1]
 			if strings.Contains(hint, domain) {
-				account.LastUsed = time.Now()
+				account.touch()
 				go func() {
 					if err := am.saveAccount(account); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to update last used time for %s: %v\n", email, err)
@@ -310,7 +376,7 @@ func (am *AccountManager) GetAccountForContext(ctx context.Context, hint string)
 	// If only one account exists, use it
 	if len(am.accounts) == 1 {
 		for email, account := range am.accounts {
-			account.LastUsed = time.Now()
+			account.touch()
 			go func() {
 				if err := am.saveAccount(account); err != nil {
 					fmt.Fprintf(os.Stderr, "Warning: failed to update last used time for %s: %v\n", email, err)
@@ -335,6 +401,8 @@ func (am *AccountManager) GetAccountForContext(ctx context.Context, hint string)
 
 // RemoveAccount removes an account
 func (am *AccountManager) RemoveAccount(email string) error {
+	am.saveMu.Lock()
+	defer am.saveMu.Unlock()
 	am.mu.Lock()
 	defer am.mu.Unlock()
 
@@ -359,22 +427,19 @@ func (am *AccountManager) RefreshToken(ctx context.Context, email string) error 
 		return err
 	}
 
-	tokenSource := am.oauthConfig.TokenSource(ctx, account.Token)
+	tokenSource := am.oauthConfig.TokenSource(ctx, account.CurrentToken())
 	newToken, err := tokenSource.Token()
 	if err != nil {
 		return fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	if err := am.setAccountToken(account, newToken); err != nil {
-		return err
+	// Switch the existing HTTP client's token source in place, so services
+	// that cached the client use the refreshed token instead of refreshing
+	// on their own and overwriting it.
+	if account.tokenSource != nil {
+		return account.tokenSource.replace(newToken)
 	}
-
-	// Rebuild the HTTP client so it starts from the refreshed token.
-	httpClient := am.newAccountHTTPClient(ctx, account)
-	account.OAuthClient.mu.Lock()
-	account.OAuthClient.httpClient = httpClient
-	account.OAuthClient.mu.Unlock()
-	return nil
+	return am.setAccountToken(account, newToken)
 }
 
 // GetOAuthConfig returns the OAuth configuration
