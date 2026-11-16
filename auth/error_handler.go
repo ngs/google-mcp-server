@@ -29,7 +29,7 @@ func HandleServiceError(err error, service string, account string) error {
 	if IsAPIDisabledError(err) {
 		apiURL := getAPIEnableURL(service)
 		return fmt.Errorf(
-			"Google %s API is not enabled for this project.\n\n"+
+			"the Google %s API is not enabled for this project.\n\n"+
 				"Account: %s\n\n"+
 				"To fix this:\n"+
 				"1. Enable the API at: %s\n"+
@@ -43,7 +43,7 @@ func HandleServiceError(err error, service string, account string) error {
 	// Check for insufficient permissions
 	if isInsufficientPermissionsError(err) {
 		return fmt.Errorf(
-			"Insufficient permissions for %s API.\n\n"+
+			"insufficient permissions for the %s API.\n\n"+
 				"Account: %s\n\n"+
 				"This error usually means:\n"+
 				"- Missing required OAuth scopes\n"+
