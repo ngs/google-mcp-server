@@ -351,6 +351,11 @@ func TestInFlightRefreshUsesReplacedToken(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"access_token":"fresh-%d","token_type":"Bearer","expires_in":3600}`, n)
 	}))
 	t.Cleanup(tokenServer.Close)
+	// Cleanups run in reverse order: unblock the handler before the server
+	// closes, even when the test fails before releasing it.
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
 	am.oauthConfig.Endpoint.TokenURL = tokenServer.URL
 
 	expired := &oauth2.Token{
@@ -379,7 +384,7 @@ func TestInFlightRefreshUsesReplacedToken(t *testing.T) {
 	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
 		t.Fatalf("RefreshToken: %v", err)
 	}
-	close(release)
+	unblock()
 
 	if got := <-result; got != "Bearer fresh-2" {
 		t.Fatalf("in-flight request sent %q, want the token installed by RefreshToken", got)
@@ -413,6 +418,11 @@ func TestInFlightRefreshErrorRetriesReplacedSource(t *testing.T) {
 		_, _ = fmt.Fprintf(w, `{"access_token":"fresh-%d","token_type":"Bearer","expires_in":3600}`, n)
 	}))
 	t.Cleanup(tokenServer.Close)
+	// Cleanups run in reverse order: unblock the handler before the server
+	// closes, even when the test fails before releasing it.
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
 	am.oauthConfig.Endpoint.TokenURL = tokenServer.URL
 
 	expired := &oauth2.Token{
@@ -441,7 +451,7 @@ func TestInFlightRefreshErrorRetriesReplacedSource(t *testing.T) {
 	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
 		t.Fatalf("RefreshToken: %v", err)
 	}
-	close(release)
+	unblock()
 
 	if got := <-result; got != "Bearer fresh-2" {
 		t.Fatalf("in-flight request got %q, want the token installed by RefreshToken", got)
