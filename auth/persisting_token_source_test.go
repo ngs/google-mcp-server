@@ -295,3 +295,99 @@ func TestConcurrentTokenReadsDuringRefresh(t *testing.T) {
 		t.Fatalf("token not valid after concurrent refreshes: %+v", tok)
 	}
 }
+
+func TestFailedSaveIsRetriedOnNextRequest(t *testing.T) {
+	am, issued := newTestAccountManager(t)
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	account := newTestAccount(am, expired)
+	// Point the account file into a directory that does not exist yet, so the
+	// first save fails.
+	dir := filepath.Join(am.configDir, "missing")
+	account.TokenFile = filepath.Join(dir, "user_at_example_com.json")
+	api := newAPIServer(t)
+	client := account.OAuthClient.GetHTTPClient()
+
+	if got := getAuthorization(t, client, api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("first request sent %q", got)
+	}
+	if _, err := os.Stat(account.TokenFile); !os.IsNotExist(err) {
+		t.Fatalf("account file unexpectedly written (stat err: %v)", err)
+	}
+
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if got := getAuthorization(t, client, api.URL); got != "Bearer fresh-1" {
+		t.Fatalf("second request sent %q", got)
+	}
+	if got := atomic.LoadInt32(issued); got != 1 {
+		t.Fatalf("token endpoint called %d times, want 1", got)
+	}
+	if stored := readAccountFile(t, account.TokenFile); stored.Token.AccessToken != "fresh-1" {
+		t.Fatalf("stored token not updated after retry: %q", stored.Token.AccessToken)
+	}
+}
+
+func TestInFlightRefreshUsesReplacedToken(t *testing.T) {
+	am, _ := newTestAccountManager(t)
+
+	// The first token request (the client's automatic refresh) blocks until
+	// released; later requests (RefreshToken) answer immediately.
+	var calls int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			close(started)
+			<-release
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"fresh-%d","token_type":"Bearer","expires_in":3600}`, n)
+	}))
+	t.Cleanup(tokenServer.Close)
+	am.oauthConfig.Endpoint.TokenURL = tokenServer.URL
+
+	expired := &oauth2.Token{
+		AccessToken:  "stale",
+		RefreshToken: "refresh-me",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(-time.Hour),
+	}
+	account := newTestAccount(am, expired)
+	api := newAPIServer(t)
+	client := account.OAuthClient.GetHTTPClient()
+
+	result := make(chan string, 1)
+	go func() {
+		resp, err := client.Get(api.URL)
+		if err != nil {
+			result <- "error: " + err.Error()
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(resp.Body)
+		result <- string(body)
+	}()
+
+	<-started
+	if err := am.RefreshToken(context.Background(), account.Email); err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	close(release)
+
+	if got := <-result; got != "Bearer fresh-2" {
+		t.Fatalf("in-flight request sent %q, want the token installed by RefreshToken", got)
+	}
+	if got := getAuthorization(t, client, api.URL); got != "Bearer fresh-2" {
+		t.Fatalf("later request sent %q, want the token installed by RefreshToken", got)
+	}
+	if stored := readAccountFile(t, account.TokenFile); stored.Token.AccessToken != "fresh-2" {
+		t.Fatalf("stored token = %q, want fresh-2", stored.Token.AccessToken)
+	}
+}

@@ -33,34 +33,39 @@ type persistingTokenSource struct {
 	last string // access token most recently persisted
 }
 
-// Token returns a valid token, persisting it when it differs from the last one.
+// Token returns a valid token, persisting it when it differs from the last
+// one written.
 func (s *persistingTokenSource) Token() (*oauth2.Token, error) {
-	s.mu.Lock()
-	base, gen := s.base, s.gen
-	s.mu.Unlock()
+	for {
+		s.mu.Lock()
+		base, gen := s.base, s.gen
+		s.mu.Unlock()
 
-	tok, err := base.Token()
-	if err != nil {
-		return nil, err
-	}
+		tok, err := base.Token()
+		if err != nil {
+			return nil, err
+		}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// The source was replaced while this token was being fetched; the newer
-	// token has already been persisted, so do not overwrite it.
-	if gen != s.gen {
+		s.mu.Lock()
+		// The source was replaced while this token was being fetched. Use the
+		// replacement instead, so the client does not keep sending a token
+		// that was superseded by RefreshToken.
+		if gen != s.gen {
+			s.mu.Unlock()
+			continue
+		}
+		if tok.AccessToken != s.last {
+			// Advance last only after a successful save, so a failed write is
+			// retried on the next request while the token is still valid.
+			if err := s.am.setAccountToken(s.account, tok); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to save refreshed token for %s: %v\n", s.account.Email, err)
+			} else {
+				s.last = tok.AccessToken
+			}
+		}
+		s.mu.Unlock()
 		return tok, nil
 	}
-	if tok.AccessToken == s.last {
-		return tok, nil
-	}
-	s.last = tok.AccessToken
-
-	if err := s.am.setAccountToken(s.account, tok); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save refreshed token for %s: %v\n", s.account.Email, err)
-	}
-	return tok, nil
 }
 
 // replace switches the source to start from token and persists it.
@@ -70,8 +75,11 @@ func (s *persistingTokenSource) replace(token *oauth2.Token) error {
 
 	s.base = s.am.reuseTokenSource(s.ctx, token)
 	s.gen++
+	if err := s.am.setAccountToken(s.account, token); err != nil {
+		return err
+	}
 	s.last = token.AccessToken
-	return s.am.setAccountToken(s.account, token)
+	return nil
 }
 
 func (am *AccountManager) reuseTokenSource(ctx context.Context, token *oauth2.Token) oauth2.TokenSource {
@@ -92,7 +100,20 @@ func (am *AccountManager) newAccountHTTPClient(ctx context.Context, account *Acc
 		src.last = token.AccessToken
 	}
 	account.tokenSource = src
-	return oauth2.NewClient(ctx, src)
+
+	// Unlike oauth2.NewClient, do not wrap src in another ReuseTokenSource:
+	// src already reuses valid tokens, and a second cache in the transport
+	// would keep serving a token after RefreshToken replaced it and would
+	// skip retrying a failed save.
+	client := &http.Client{}
+	if cc, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && cc != nil {
+		client.Transport = cc.Transport
+		client.CheckRedirect = cc.CheckRedirect
+		client.Jar = cc.Jar
+		client.Timeout = cc.Timeout
+	}
+	client.Transport = &oauth2.Transport{Source: src, Base: client.Transport}
+	return client
 }
 
 // setAccountToken replaces an account's token in memory and, while the account
