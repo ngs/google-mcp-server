@@ -22,6 +22,8 @@ type AccountManager struct {
 	configDir   string
 	oauthConfig *oauth2.Config
 	mu          sync.RWMutex
+	// saveMu serializes writes of account files and token swaps.
+	saveMu sync.Mutex
 }
 
 // Account represents a single authenticated Google account
@@ -119,13 +121,12 @@ func (am *AccountManager) loadAccounts(ctx context.Context) error {
 		account.TokenFile = tokenFile
 
 		// Create OAuth client for this account
-		oauthClient := &OAuthClient{
-			config:     am.oauthConfig,
-			token:      account.Token,
-			tokenFile:  tokenFile,
-			httpClient: am.oauthConfig.Client(ctx, account.Token),
+		account.OAuthClient = &OAuthClient{
+			config:    am.oauthConfig,
+			token:     account.Token,
+			tokenFile: tokenFile,
 		}
-		account.OAuthClient = oauthClient
+		account.OAuthClient.httpClient = am.newAccountHTTPClient(ctx, &account)
 
 		// Get user info if not available
 		if account.Email == "" {
@@ -177,11 +178,11 @@ func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (
 
 	// Create OAuth client for this account
 	account.OAuthClient = &OAuthClient{
-		config:     am.oauthConfig,
-		token:      token,
-		tokenFile:  account.TokenFile,
-		httpClient: tempClient,
+		config:    am.oauthConfig,
+		token:     token,
+		tokenFile: account.TokenFile,
 	}
+	account.OAuthClient.httpClient = am.newAccountHTTPClient(ctx, account)
 
 	// Save account
 	if err := am.saveAccount(account); err != nil {
@@ -194,6 +195,13 @@ func (am *AccountManager) AddAccount(ctx context.Context, token *oauth2.Token) (
 
 // saveAccount saves an account to disk
 func (am *AccountManager) saveAccount(account *Account) error {
+	am.saveMu.Lock()
+	defer am.saveMu.Unlock()
+	return am.saveAccountLocked(account)
+}
+
+// saveAccountLocked writes an account file; the caller must hold saveMu.
+func (am *AccountManager) saveAccountLocked(account *Account) error {
 	data, err := json.MarshalIndent(account, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal account: %w", err)
@@ -357,10 +365,16 @@ func (am *AccountManager) RefreshToken(ctx context.Context, email string) error 
 		return fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	account.Token = newToken
-	account.OAuthClient.token = newToken
+	if err := am.setAccountToken(account, newToken); err != nil {
+		return err
+	}
 
-	return am.saveAccount(account)
+	// Rebuild the HTTP client so it starts from the refreshed token.
+	httpClient := am.newAccountHTTPClient(ctx, account)
+	account.OAuthClient.mu.Lock()
+	account.OAuthClient.httpClient = httpClient
+	account.OAuthClient.mu.Unlock()
+	return nil
 }
 
 // GetOAuthConfig returns the OAuth configuration
